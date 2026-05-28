@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<assessmentItem xmlns="http://www.imsglobal.org/xsd/imsqti_v2p1" identifier="cloze-item" title="Cloze Item" adaptive="false" timeDependent="false">
+  <responseDeclaration identifier="RESPONSE_1" cardinality="single" baseType="string">
+    <correctResponse>
+      <value>Tokyo</value>
+    </correctResponse>
+  </responseDeclaration>
+  <responseDeclaration identifier="RESPONSE_2" cardinality="single" baseType="string">
+    <correctResponse>
+      <value>/reiwa/</value>
+    </correctResponse>
+  </responseDeclaration>
+  <itemBody>
+    <p>
+      Japan's capital is <textEntryInteraction responseIdentifier="RESPONSE_1" expectedLength="5"/>.
+      Current era name (case-insensitive regex) is <textEntryInteraction responseIdentifier="RESPONSE_2" expectedLength="8"/>.
+    </p>
+    <textEntryInteraction responseIdentifier="RESPONSE_1" expectedLength="5"/>
+  </itemBody>
+  <modalFeedback identifier="correct" outcomeIdentifier="FEEDBACK" showHide="show">Use Tokyo and a regex for Reiwa.</modalFeedback>
+  <timeLimits maxTime="PT59S"/>
+</assessmentItem>

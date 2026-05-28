@@ -1,0 +1,314 @@
+import { XMLParser } from 'fast-xml-parser';
+import { asArray, getTextContent, parseXml } from './xml-parser.js';
+const preserveOrderXmlParser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '@_',
+    removeNSPrefix: true,
+    trimValues: false,
+    parseTagValue: false,
+    parseAttributeValue: false,
+    preserveOrder: true,
+    processEntities: true,
+});
+const INTERACTION_KEYS = [
+    'choiceInteraction',
+    'textEntryInteraction',
+    'extendedTextInteraction',
+];
+function asRecord(value, errorMessage) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error(errorMessage);
+    }
+    return value;
+}
+function readStringAttribute(node, key) {
+    const value = node[key];
+    return typeof value === 'string' ? value : undefined;
+}
+function collectAssessmentItemRefs(node) {
+    if (!node || typeof node !== 'object') {
+        return [];
+    }
+    if (Array.isArray(node)) {
+        return node.flatMap(collectAssessmentItemRefs);
+    }
+    const record = node;
+    const refs = [];
+    for (const [key, value] of Object.entries(record)) {
+        if (key === 'assessmentItemRef') {
+            for (const ref of asArray(value)) {
+                if (ref && typeof ref === 'object' && !Array.isArray(ref)) {
+                    refs.push(ref);
+                }
+            }
+            continue;
+        }
+        refs.push(...collectAssessmentItemRefs(value));
+    }
+    return refs;
+}
+function findInteraction(itemBody) {
+    for (const key of INTERACTION_KEYS) {
+        const value = itemBody[key];
+        if (!value) {
+            continue;
+        }
+        const interaction = asRecord(Array.isArray(value) ? value[0] : value, `Invalid ${key}: expected an object node.`);
+        return { key, interaction };
+    }
+    throw new Error('Unsupported or missing interaction in assessment item body.');
+}
+function inferInteractionType(interactionKey) {
+    if (interactionKey === 'choiceInteraction') {
+        return 'choice';
+    }
+    if (interactionKey === 'textEntryInteraction') {
+        return 'text-entry';
+    }
+    return 'extended-text';
+}
+function extractPrompt(itemBody) {
+    const chunks = [];
+    for (const [key, value] of Object.entries(itemBody)) {
+        if (INTERACTION_KEYS.includes(key)) {
+            break;
+        }
+        if (key.startsWith('@_')) {
+            continue;
+        }
+        const text = getTextContent(value);
+        if (text) {
+            chunks.push(text);
+        }
+    }
+    return chunks.join('\n').trim();
+}
+function extractChoices(interaction, interactionType) {
+    if (interactionType !== 'choice') {
+        return [];
+    }
+    return asArray(interaction.simpleChoice)
+        .map((choice) => asRecord(choice, 'Invalid simpleChoice node: expected object.'))
+        .map((choice) => ({
+        identifier: readStringAttribute(choice, '@_identifier') ?? '',
+        text: getTextContent(choice),
+    }))
+        .filter((choice) => choice.identifier.length > 0);
+}
+function extractCorrectResponses(itemNode) {
+    const declarations = asArray(itemNode.responseDeclaration)
+        .filter((value) => !!value && typeof value === 'object' && !Array.isArray(value));
+    const responses = [];
+    for (const declaration of declarations) {
+        const correctResponse = declaration.correctResponse;
+        if (!correctResponse || typeof correctResponse !== 'object' || Array.isArray(correctResponse)) {
+            continue;
+        }
+        const valueNode = correctResponse.value;
+        for (const value of asArray(valueNode)) {
+            const text = getTextContent(value).trim();
+            if (text) {
+                responses.push(text);
+            }
+        }
+    }
+    return responses;
+}
+function extractCorrectResponsesByDeclaration(itemNode) {
+    const declarations = asArray(itemNode.responseDeclaration)
+        .filter((value) => !!value && typeof value === 'object' && !Array.isArray(value));
+    const map = {};
+    for (const declaration of declarations) {
+        const declarationId = readStringAttribute(declaration, '@_identifier');
+        if (!declarationId) {
+            continue;
+        }
+        const correctResponse = declaration.correctResponse;
+        if (!correctResponse || typeof correctResponse !== 'object' || Array.isArray(correctResponse)) {
+            continue;
+        }
+        const valueNode = correctResponse.value;
+        const values = [];
+        for (const value of asArray(valueNode)) {
+            const text = getTextContent(value).trim();
+            if (text) {
+                values.push(text);
+            }
+        }
+        if (values.length > 0) {
+            map[declarationId] = values;
+        }
+    }
+    return map;
+}
+function formatBlankPlaceholder(answer) {
+    return answer.length > 0 ? `\${${answer}}` : '${}';
+}
+function extractTextEntryPromptFromXml(xml, responsesByDeclaration) {
+    const preserveParsed = preserveOrderXmlParser.parse(xml);
+    if (!Array.isArray(preserveParsed) || preserveParsed.length === 0) {
+        return '';
+    }
+    const rootNode = preserveParsed[0];
+    const assessmentItemNodes = rootNode.assessmentItem;
+    if (!Array.isArray(assessmentItemNodes)) {
+        return '';
+    }
+    const itemBodyEntry = assessmentItemNodes.find((entry) => {
+        if (!entry || typeof entry !== 'object') {
+            return false;
+        }
+        return 'itemBody' in entry;
+    });
+    if (!itemBodyEntry) {
+        return '';
+    }
+    const itemBodyNodes = itemBodyEntry.itemBody;
+    if (!Array.isArray(itemBodyNodes)) {
+        return '';
+    }
+    const lines = [];
+    for (const node of itemBodyNodes) {
+        if (!node || typeof node !== 'object') {
+            continue;
+        }
+        const record = node;
+        if ('choiceInteraction' in record || 'extendedTextInteraction' in record || 'rubricBlock' in record) {
+            continue;
+        }
+        for (const [tagName, tagValue] of Object.entries(record)) {
+            if (tagName === ':@' || !Array.isArray(tagValue)) {
+                continue;
+            }
+            const chunks = [];
+            for (const child of tagValue) {
+                if (!child || typeof child !== 'object') {
+                    continue;
+                }
+                const childRecord = child;
+                const textValue = childRecord['#text'];
+                if (typeof textValue === 'string' && textValue.length > 0) {
+                    chunks.push(textValue);
+                }
+                if ('textEntryInteraction' in childRecord) {
+                    const attrs = childRecord[':@'];
+                    const responseIdentifier = attrs && typeof attrs === 'object' && !Array.isArray(attrs)
+                        ? readStringAttribute(attrs, '@_responseIdentifier')
+                        : undefined;
+                    const responseValues = responseIdentifier ? responsesByDeclaration[responseIdentifier] : undefined;
+                    const placeholder = formatBlankPlaceholder(responseValues?.[0] ?? '');
+                    chunks.push(placeholder);
+                }
+                const inlineText = getTextContent(Object.fromEntries(Object.entries(childRecord).filter(([key]) => key !== ':@' && key !== '#text' && key !== 'textEntryInteraction')));
+                if (inlineText) {
+                    chunks.push(inlineText);
+                }
+            }
+            const line = chunks.join('').replace(/\s+/g, ' ').trim();
+            if (line) {
+                lines.push(line);
+            }
+        }
+    }
+    return lines.join('\n').trim();
+}
+function parseTimeLimitSeconds(itemNode) {
+    const timeLimitsNode = itemNode.timeLimits;
+    if (!timeLimitsNode || typeof timeLimitsNode !== 'object' || Array.isArray(timeLimitsNode)) {
+        return undefined;
+    }
+    const rawValue = readStringAttribute(timeLimitsNode, '@_maxTime') ??
+        readStringAttribute(timeLimitsNode, '@_maxtime') ??
+        readStringAttribute(timeLimitsNode, '@_maximum') ??
+        readStringAttribute(timeLimitsNode, '@_seconds');
+    if (!rawValue) {
+        return undefined;
+    }
+    const numericSeconds = Number(rawValue);
+    if (Number.isFinite(numericSeconds) && numericSeconds > 0) {
+        return numericSeconds;
+    }
+    const isoMatch = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/i.exec(rawValue.trim());
+    if (!isoMatch) {
+        return undefined;
+    }
+    const hours = Number(isoMatch[1] ?? 0);
+    const minutes = Number(isoMatch[2] ?? 0);
+    const seconds = Number(isoMatch[3] ?? 0);
+    const totalSeconds = (hours * 60 * 60) + (minutes * 60) + seconds;
+    return totalSeconds > 0 ? totalSeconds : undefined;
+}
+function extractRubric(itemNode) {
+    return asArray(itemNode.rubricBlock)
+        .map((node) => getTextContent(node).trim())
+        .filter((value) => value.length > 0);
+}
+function extractFeedback(itemNode) {
+    return asArray(itemNode.modalFeedback)
+        .map((node) => getTextContent(node).trim())
+        .filter((value) => value.length > 0);
+}
+export function parseAssessmentXml(xml) {
+    const parsedRoot = parseXml(xml);
+    const assessmentNode = asRecord(parsedRoot.assessmentTest, 'Invalid assessment-test XML: missing assessmentTest root.');
+    const identifier = readStringAttribute(assessmentNode, '@_identifier');
+    if (!identifier) {
+        throw new Error('Invalid assessment-test XML: missing assessment identifier.');
+    }
+    const itemRefs = collectAssessmentItemRefs(assessmentNode).map((refNode) => {
+        const refIdentifier = readStringAttribute(refNode, '@_identifier') ?? '';
+        return {
+            identifier: refIdentifier,
+            href: readStringAttribute(refNode, '@_href'),
+        };
+    }).filter((ref) => ref.identifier.length > 0);
+    return {
+        identifier,
+        title: readStringAttribute(assessmentNode, '@_title'),
+        itemRefs,
+    };
+}
+export function parseAssessmentItemXml(xml) {
+    const parsedRoot = parseXml(xml);
+    const itemNode = asRecord(parsedRoot.assessmentItem, 'Invalid qti-assessment-item XML: missing assessmentItem root.');
+    const identifier = readStringAttribute(itemNode, '@_identifier');
+    if (!identifier) {
+        throw new Error('Invalid qti-assessment-item XML: missing item identifier.');
+    }
+    const title = readStringAttribute(itemNode, '@_title') ?? '';
+    const itemBody = asRecord(itemNode.itemBody, 'Invalid qti-assessment-item XML: missing itemBody.');
+    const { key: interactionKey, interaction } = findInteraction(itemBody);
+    const interactionType = inferInteractionType(interactionKey);
+    const responsesByDeclaration = extractCorrectResponsesByDeclaration(itemNode);
+    const textEntryPrompt = interactionType === 'text-entry'
+        ? extractTextEntryPromptFromXml(xml, responsesByDeclaration)
+        : undefined;
+    return {
+        identifier,
+        title,
+        interactionType,
+        prompt: textEntryPrompt && textEntryPrompt.length > 0 ? textEntryPrompt : extractPrompt(itemBody),
+        timeLimitSeconds: parseTimeLimitSeconds(itemNode),
+        choices: extractChoices(interaction, interactionType),
+        correctResponses: extractCorrectResponses(itemNode),
+        rubric: extractRubric(itemNode),
+        feedback: extractFeedback(itemNode),
+    };
+}
+export function parseQtiPackageFromXml(options) {
+    const assessment = parseAssessmentXml(options.assessmentXml);
+    const items = [];
+    for (const itemRef of assessment.itemRefs) {
+        const itemXml = options.itemXmlByIdentifier[itemRef.identifier];
+        if (!itemXml) {
+            continue;
+        }
+        items.push(parseAssessmentItemXml(itemXml));
+    }
+    const itemsByIdentifier = Object.fromEntries(items.map((item) => [item.identifier, item]));
+    return {
+        assessment,
+        items,
+        itemsByIdentifier,
+    };
+}

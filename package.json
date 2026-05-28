@@ -1,0 +1,30 @@
+{
+  "name": "@metyatech/qti-to-track",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/index.js",
+  "bin": {
+    "qti-to-track": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "start": "node ./dist/cli/index.js",
+    "test": "vitest run",
+    "build": "tsc",
+    "verify": "npm run test && npm run build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@metyatech/track-tcm-api-client": "file:../track-tcm-api-client",
+    "commander": "^14.0.3",
+    "fast-xml-parser": "^5.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "playwright": "^1.60.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7"
+  }
+}

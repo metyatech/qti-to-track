@@ -1,0 +1,45 @@
+[
+  {
+    "url": "https://auth.tracks.run/u/login?state=hqFo2SBMaHlhYlVGM3lwdnFkMksxVzh0ZHFvWTBrNEtEX1ZSWaFur3VuaXZlcnNhbC1sb2dpbqN0aWTZIEFPTjNkR0g2d09QNXN0VEFhWUhBUkgxMnZlTzhXUFVto2NpZNkgR2ZRZHdIakZWeEg0WWZaZHAzdDJuZ2NIUzFEbElXbDOlb3JnaWS0b3JnX1QwUFN4OVVEUGc4a2p3SEOnb3JnbmFtZa5zYWl0YW1hLWl0LXdlYg",
+    "method": "POST",
+    "headers": {
+      "content-type": "application/x-www-form-urlencoded",
+      "origin": "https://auth.tracks.run",
+      "referer": "https://auth.tracks.run/u/login?state=hqFo2SBMaHlhYlVGM3lwdnFkMksxVzh0ZHFvWTBrNEtEX1ZSWaFur3VuaXZlcnNhbC1sb2dpbqN0aWTZIEFPTjNkR0g2d09QNXN0VEFhWUhBUkgxMnZlTzhXUFVto2NpZNkgR2ZRZHdIakZWeEg0WWZaZHAzdDJuZ2NIUzFEbElXbDOlb3JnaWS0b3JnX1QwUFN4OVVEUGc4a2p3SEOnb3JnbmFtZa5zYWl0YW1hLWl0LXdlYg",
+      "upgrade-insecure-requests": "1",
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": "\"Windows\""
+    },
+    "postData": "state=hqFo2SBMaHlhYlVGM3lwdnFkMksxVzh0ZHFvWTBrNEtEX1ZSWaFur3VuaXZlcnNhbC1sb2dpbqN0aWTZIEFPTjNkR0g2d09QNXN0VEFhWUhBUkgxMnZlTzhXUFVto2NpZNkgR2ZRZHdIakZWeEg0WWZaZHAzdDJuZ2NIUzFEbElXbDOlb3JnaWS0b3JnX1QwUFN4OVVEUGc4a2p3SEOnb3JnbmFtZa5zYWl0YW1hLWl0LXdlYg&username=k-yamamoto%40siw.ac.jp&password=pzdus%26x9G5q%2F"
+  },
+  {
+    "url": "https://tracks.dev/api/images/upload-signature",
+    "method": "POST",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "x-appspace-with": "01J3H178MBAXZ3ESZFPN9WX1MB",
+      "referer": "https://tracks.dev/app/01J3H178MBAXZ3ESZFPN9WX1MB/questions",
+      "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+      "sec-ch-ua-mobile": "?0",
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "accept": "application/json, text/plain, */*",
+      "content-type": "application/json"
+    },
+    "postData": "{\"width\":640,\"height\":640}"
+  },
+  {
+    "url": "https://api.cloudinary.com/v1_1/hhicqrxgg/image/upload",
+    "method": "POST",
+    "headers": {
+      "sec-ch-ua-platform": "\"Windows\"",
+      "referer": "https://tracks.dev/",
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "accept": "application/json, text/plain, */*",
+      "sec-ch-ua": "\"Not/A)Brand\";v=\"99\", \"Chromium\";v=\"148\"",
+      "content-type": "multipart/form-data; boundary=----WebKitFormBoundaryo0NiR1KuePy7IQX1",
+      "sec-ch-ua-mobile": "?0"
+    }
+  }
+]

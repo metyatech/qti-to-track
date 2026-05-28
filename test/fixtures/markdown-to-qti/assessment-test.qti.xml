@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<assessmentTest xmlns="http://www.imsglobal.org/xsd/imsqti_v2p1" identifier="md2qti-sample-test" title="Markdown to QTI Sample Test">
+  <outcomeDeclaration identifier="SCORE" cardinality="single" baseType="float">
+    <defaultValue>
+      <value>0</value>
+    </defaultValue>
+  </outcomeDeclaration>
+  <testPart identifier="part-1" navigationMode="linear" submissionMode="individual">
+    <assessmentSection identifier="section-1" title="Section 1" visible="true">
+      <assessmentItemRef identifier="choice-item" href="items/choice-item.qti.xml"/>
+      <assessmentItemRef identifier="cloze-item" href="items/cloze-item.qti.xml"/>
+      <assessmentItemRef identifier="descriptive-item" href="items/descriptive-item.qti.xml"/>
+      <timeLimits maxTime="PT2M10S"/>
+    </assessmentSection>
+  </testPart>
+</assessmentTest>
