@@ -11,20 +11,10 @@ function toQuestionKind(item) {
     }
     return 4;
 }
-function isRegexAnswer(value) {
-    return value.length >= 2 && value.startsWith('/') && value.endsWith('/');
-}
-function toTrackBlankPayload(answer) {
-    if (isRegexAnswer(answer)) {
-        return {
-            answer: answer.slice(1, -1),
-            kind: 'regex',
-            caseSensitive: false,
-        };
-    }
+function toTrackBlankPayload(blank) {
     return {
-        answer,
-        kind: 'exact',
+        answer: blank.answer,
+        kind: blank.kind,
         caseSensitive: false,
     };
 }
@@ -34,17 +24,20 @@ function toTrackChoicePayload(choice, correctResponses) {
         correct: correctResponses.has(choice.identifier),
     };
 }
-function toPlaceholder(answer) {
-    return answer.length > 0 ? `\${${answer}}` : '${}';
+function toPlaceholder(blank) {
+    if (blank.answer.length === 0) {
+        return '${}';
+    }
+    return blank.kind === 'regex' ? `\${/${blank.answer}/}` : `\${${blank.answer}}`;
 }
-function ensureClozePlaceholders(content, correctResponses) {
-    if (correctResponses.length === 0) {
+function ensureClozePlaceholders(content, blanks) {
+    if (blanks.length === 0) {
         return content;
     }
     if (/\$\{[^}]*\}/.test(content)) {
         return content;
     }
-    const placeholders = correctResponses.map(toPlaceholder).join(' ');
+    const placeholders = blanks.map(toPlaceholder).join(' ');
     return content.length > 0 ? `${content}\n${placeholders}` : placeholders;
 }
 function estimateItemTimeLimitSeconds(item) {
@@ -79,28 +72,28 @@ function toQuestionPayload(item) {
     if (item.interactionType === 'text-entry') {
         return {
             ...basePayload,
-            content: ensureClozePlaceholders(item.prompt, item.correctResponses),
-            blanks: item.correctResponses.map(toTrackBlankPayload),
+            content: ensureClozePlaceholders(item.prompt, item.blanks),
+            blanks: item.blanks.map(toTrackBlankPayload),
         };
     }
     return basePayload;
 }
-export function toTrackPayloads(parsed) {
+export function toTrackPayloads(parsed, options = {}) {
     const questions = parsed.items.map(toQuestionPayload);
     const totalSeconds = estimateMaterialTimeLimitSeconds(parsed);
-    const material = {
-        title: parsed.assessment.title ?? parsed.assessment.identifier,
+    const materialDraft = {
+        title: options.materialTitle ?? parsed.assessment.title ?? parsed.assessment.identifier,
         style: 1,
         status: 2,
         language: 'ja',
         basicTimeMinutes: Math.max(1, Math.ceil(totalSeconds / 60)),
         difficulty: 1,
-        questionIds: parsed.items.map((item) => item.identifier),
-        materialTypes: [1],
+        questionKeys: parsed.items.map((item) => item.identifier),
+        materialTypes: [options.materialType ?? 'others'],
         availableApps: ['training'],
     };
     return {
-        material,
+        materialDraft,
         questions,
     };
 }

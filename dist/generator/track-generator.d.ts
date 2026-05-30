@@ -1,5 +1,9 @@
-import type { ParsedQtiPackage, TrackMaterialPayload, TrackQuestionPayload } from '../types.js';
-export declare function toTrackPayloads(parsed: ParsedQtiPackage): {
-    material: TrackMaterialPayload;
+import type { ParsedQtiPackage, TrackMaterialDraft } from '../types.js';
+import type { TrackQuestionPayload } from '@metyatech/track-tcm-api-client';
+export declare function toTrackPayloads(parsed: ParsedQtiPackage, options?: {
+    materialType?: string;
+    materialTitle?: string;
+}): {
+    materialDraft: TrackMaterialDraft;
     questions: TrackQuestionPayload[];
 };

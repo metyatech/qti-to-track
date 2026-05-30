@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { loadTrackMap, saveTrackMap, hashTrackSource, TrackMap } from '../../src/publish/track-map.js';
-import { rm, writeFile } from 'node:fs/promises';
+import { loadTrackMap, saveTrackMap, hashTrackSource, TrackMap, stableJsonStringify, updateTrackMapForPublish } from '../../src/publish/track-map.js';
+import { rm, stat, writeFile } from 'node:fs/promises';
 
 describe('track-map', () => {
   const TEST_FILE = 'tests/publish/test-track-map.yaml';
@@ -43,5 +43,119 @@ describe('track-map', () => {
     const source = JSON.stringify({ a: 1 });
     const hash = hashTrackSource(source);
     expect(hash).toMatch(/^sha256:[a-f0-9]{64}$/);
+  });
+
+  it('stable stringifies API payloads independent of object key insertion order', () => {
+    expect(stableJsonStringify({ b: 2, a: { d: 4, c: 3 } })).toBe(
+      stableJsonStringify({ a: { c: 3, d: 4 }, b: 2 }),
+    );
+  });
+
+  it('updates questions and material entries from API payload hashes', () => {
+    const updated = updateTrackMapForPublish({
+      trackMap: { version: 1 },
+      target: { base_url: 'https://tracks.dev', appspace: 'app' },
+      baseKey: 'qti',
+      questionKeys: ['q1'],
+      questionPayloads: [
+        {
+          title: 'Q1',
+          questionKind: 1,
+          status: 2,
+          content: 'Pick',
+          howToSolve: '',
+          quizCategories: [99],
+          availableApps: ['training'],
+        },
+      ],
+      materialDraft: {
+        title: 'Material',
+        style: 1,
+        status: 2,
+        language: 'ja',
+        basicTimeMinutes: 1,
+        difficulty: 1,
+        questionKeys: ['q1'],
+        materialTypes: ['others'],
+        availableApps: ['training'],
+      },
+      materialPayload: {
+        title: 'Material',
+        style: 1,
+        status: 2,
+        language: 'ja',
+        basicTimeMinutes: 1,
+        difficulty: 1,
+        questionIds: [101],
+        materialTypes: ['others'],
+        availableApps: ['training'],
+      },
+      result: {
+        trackQuestionIds: [101],
+        trackMaterialId: 201,
+        materialAction: 'created',
+        trackReleaseId: 'rel-1',
+      },
+      updatedAt: '2026-05-30T00:00:00.000Z',
+    });
+
+    expect(updated.questions?.['qti/q1']?.track_question_id).toBe(101);
+    expect(updated.questions?.['qti/q1']?.source_hash).toMatch(/^sha256:/);
+    expect(updated.materials?.['qti/Material']).toMatchObject({
+      track_material_id: 201,
+      title: 'Material',
+      source_hash: expect.stringMatching(/^sha256:/),
+      release_id: 'rel-1',
+    });
+  });
+
+  it('omits material entry when material is skipped', () => {
+    const updated = updateTrackMapForPublish({
+      trackMap: { version: 1 },
+      target: { base_url: 'https://tracks.dev', appspace: 'app' },
+      baseKey: 'qti',
+      questionKeys: ['q1'],
+      questionPayloads: [
+        {
+          title: 'Q1',
+          questionKind: 1,
+          status: 2,
+          content: 'Pick',
+          howToSolve: '',
+          quizCategories: [99],
+          availableApps: ['training'],
+        },
+      ],
+      materialDraft: {
+        title: 'Material',
+        style: 1,
+        status: 2,
+        language: 'ja',
+        basicTimeMinutes: 1,
+        difficulty: 1,
+        questionKeys: ['q1'],
+        materialTypes: ['others'],
+        availableApps: ['training'],
+      },
+      result: {
+        trackQuestionIds: [101],
+        materialAction: 'skipped',
+      },
+      updatedAt: '2026-05-30T00:00:00.000Z',
+    });
+
+    expect(updated.questions?.['qti/q1']).toBeDefined();
+    expect(updated.materials).toBeUndefined();
+  });
+
+  it('can leave track-map completely untouched when disabled by caller', async () => {
+    const content = 'version: 1\n';
+    await writeFile(TEST_FILE, content, 'utf8');
+
+    const before = await stat(TEST_FILE);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const after = await stat(TEST_FILE);
+
+    expect(after.mtimeMs).toBe(before.mtimeMs);
   });
 });

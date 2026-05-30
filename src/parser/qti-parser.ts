@@ -1,5 +1,6 @@
 import { XMLParser } from 'fast-xml-parser';
 import {
+  type ParsedBlank,
   type ParsedAssessment,
   type ParsedQtiChoice,
   type ParsedQtiItem,
@@ -9,6 +10,12 @@ import {
 import { asArray, getTextContent, parseXml, type ParsedXmlNode } from './xml-parser.js';
 
 type XmlRecord = Record<string, unknown>;
+
+interface ParsedResponseDeclaration {
+  identifier: string;
+  values: string[];
+  kind: 'exact' | 'regex';
+}
 
 const preserveOrderXmlParser = new XMLParser({
   ignoreAttributes: false,
@@ -42,6 +49,21 @@ function asRecord(value: unknown, errorMessage: string): XmlRecord {
 function readStringAttribute(node: XmlRecord, key: string): string | undefined {
   const value = node[key];
   return typeof value === 'string' ? value : undefined;
+}
+
+function readAnyStringAttribute(node: XmlRecord, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = readStringAttribute(node, key);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function readResponseIdentifierAttribute(node: XmlRecord): string | undefined {
+  return readAnyStringAttribute(node, ['@_responseIdentifier', '@_response-identifier']);
 }
 
 function asRecords(value: unknown): XmlRecord[] {
@@ -152,34 +174,14 @@ function extractChoices(interaction: XmlRecord | undefined, interactionType: Tra
 }
 
 function extractCorrectResponses(itemNode: XmlRecord): string[] {
-  const declarations = asArray(itemNode.responseDeclaration)
-    .filter((value): value is XmlRecord => !!value && typeof value === 'object' && !Array.isArray(value));
-
-  const responses: string[] = [];
-
-  for (const declaration of declarations) {
-    const correctResponse = declaration.correctResponse;
-    if (!correctResponse || typeof correctResponse !== 'object' || Array.isArray(correctResponse)) {
-      continue;
-    }
-
-    const valueNode = (correctResponse as XmlRecord).value;
-    for (const value of asArray(valueNode)) {
-      const text = getTextContent(value).trim();
-      if (text) {
-        responses.push(text);
-      }
-    }
-  }
-
-  return responses;
+  return extractResponseDeclarations(itemNode).flatMap((declaration) => declaration.values);
 }
 
-function extractCorrectResponsesByDeclaration(itemNode: XmlRecord): Record<string, string[]> {
+function extractResponseDeclarations(itemNode: XmlRecord): ParsedResponseDeclaration[] {
   const declarations = asArray(itemNode.responseDeclaration)
     .filter((value): value is XmlRecord => !!value && typeof value === 'object' && !Array.isArray(value));
 
-  const map: Record<string, string[]> = {};
+  const parsedDeclarations: ParsedResponseDeclaration[] = [];
 
   for (const declaration of declarations) {
     const declarationId = readStringAttribute(declaration, '@_identifier');
@@ -203,30 +205,55 @@ function extractCorrectResponsesByDeclaration(itemNode: XmlRecord): Record<strin
     }
 
     if (values.length > 0) {
-      map[declarationId] = values;
+      const interpretationKind = readStringAttribute(declaration, '@_interpretation') === 'regex' ? 'regex' : 'exact';
+      const kind =
+        interpretationKind === 'regex' ||
+        (values.length === 1 && values[0]!.length >= 2 && values[0]!.startsWith('/') && values[0]!.endsWith('/'))
+          ? 'regex'
+          : 'exact';
+
+      parsedDeclarations.push({
+        identifier: declarationId,
+        values: kind === 'regex' ? values.map((value) => value.replace(/^\/(.+)\/$/u, '$1')) : values,
+        kind,
+      });
     }
+  }
+
+  return parsedDeclarations;
+}
+
+function extractCorrectResponsesByDeclaration(itemNode: XmlRecord): Record<string, ParsedResponseDeclaration> {
+  const map: Record<string, ParsedResponseDeclaration> = {};
+
+  for (const declaration of extractResponseDeclarations(itemNode)) {
+    map[declaration.identifier] = declaration;
   }
 
   return map;
 }
 
-function formatBlankPlaceholder(answer: string): string {
-  return answer.length > 0 ? `\${${answer}}` : '${}';
+function formatBlankPlaceholder(blank: ParsedBlank | undefined): string {
+  if (!blank || blank.answer.length === 0) {
+    return '${}';
+  }
+
+  return blank.kind === 'regex' ? `\${/${blank.answer}/}` : `\${${blank.answer}}`;
 }
 
 function extractTextEntryPromptFromXml(
   xml: string,
-  responsesByDeclaration: Record<string, string[]>,
-): string {
+  responsesByDeclaration: Record<string, ParsedResponseDeclaration>,
+): { prompt: string; responseIdentifiers: string[] } {
   const preserveParsed = preserveOrderXmlParser.parse(xml);
   if (!Array.isArray(preserveParsed) || preserveParsed.length === 0) {
-    return '';
+    return { prompt: '', responseIdentifiers: [] };
   }
 
   const rootNode = preserveParsed[0] as XmlRecord;
   const assessmentItemNodes = rootNode.assessmentItem;
   if (!Array.isArray(assessmentItemNodes)) {
-    return '';
+    return { prompt: '', responseIdentifiers: [] };
   }
 
   const itemBodyEntry = assessmentItemNodes.find((entry) => {
@@ -237,15 +264,16 @@ function extractTextEntryPromptFromXml(
   }) as XmlRecord | undefined;
 
   if (!itemBodyEntry) {
-    return '';
+    return { prompt: '', responseIdentifiers: [] };
   }
 
   const itemBodyNodes = itemBodyEntry.itemBody;
   if (!Array.isArray(itemBodyNodes)) {
-    return '';
+    return { prompt: '', responseIdentifiers: [] };
   }
 
   const lines: string[] = [];
+  const responseIdentifiers: string[] = [];
 
   for (const node of itemBodyNodes) {
     if (!node || typeof node !== 'object') {
@@ -279,11 +307,23 @@ function extractTextEntryPromptFromXml(
           const attrs = childRecord[':@'];
           const responseIdentifier =
             attrs && typeof attrs === 'object' && !Array.isArray(attrs)
-              ? readStringAttribute(attrs as XmlRecord, '@_responseIdentifier')
+              ? readResponseIdentifierAttribute(attrs as XmlRecord)
               : undefined;
 
-          const responseValues = responseIdentifier ? responsesByDeclaration[responseIdentifier] : undefined;
-          const placeholder = formatBlankPlaceholder(responseValues?.[0] ?? '');
+          const responseDeclaration = responseIdentifier ? responsesByDeclaration[responseIdentifier] : undefined;
+          if (responseIdentifier) {
+            responseIdentifiers.push(responseIdentifier);
+          }
+
+          const placeholder = formatBlankPlaceholder(
+            responseIdentifier
+              ? {
+                  responseIdentifier,
+                  answer: responseDeclaration?.values[0] ?? '',
+                  kind: responseDeclaration?.kind ?? 'exact',
+                }
+              : undefined,
+          );
           chunks.push(placeholder);
         } else if ('img' in childRecord || 'qti-img' in childRecord) {
           const attrs = childRecord[':@'];
@@ -313,7 +353,7 @@ function extractTextEntryPromptFromXml(
     }
   }
 
-  return lines.join('\n').trim();
+  return { prompt: lines.join('\n').trim(), responseIdentifiers };
 }
 
 function parseTimeLimitsNodeSeconds(timeLimitsNode: XmlRecord): number | undefined {
@@ -466,15 +506,38 @@ export function parseAssessmentItemXml(xml: string): ParsedQtiItem {
     interactionType === 'text-entry'
       ? extractTextEntryPromptFromXml(xml, responsesByDeclaration)
       : undefined;
+  const blanks =
+    interactionType === 'text-entry'
+      ? (
+          textEntryPrompt && textEntryPrompt.responseIdentifiers.length > 0
+            ? textEntryPrompt.responseIdentifiers
+            : Object.keys(responsesByDeclaration)
+        )
+          .map((responseIdentifier): ParsedBlank | undefined => {
+            const declaration = responsesByDeclaration[responseIdentifier];
+            const answer = declaration?.values[0];
+            if (!answer) {
+              return undefined;
+            }
+
+            return {
+              responseIdentifier,
+              answer,
+              kind: declaration.kind,
+            };
+          })
+          .filter((blank): blank is ParsedBlank => blank !== undefined)
+      : [];
 
   return {
     identifier,
     title,
     interactionType,
-    prompt: textEntryPrompt && textEntryPrompt.length > 0 ? textEntryPrompt : extractPrompt(itemBody),
+    prompt: textEntryPrompt && textEntryPrompt.prompt.length > 0 ? textEntryPrompt.prompt : extractPrompt(itemBody),
     timeLimitSeconds: parseTimeLimitSeconds(itemNode),
     choices: extractChoices(interaction, interactionType),
     correctResponses: extractCorrectResponses(itemNode),
+    blanks,
     rubric: extractRubric(itemNode),
     feedback: extractFeedback(itemNode),
   };

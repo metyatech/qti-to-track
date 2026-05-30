@@ -1,18 +1,51 @@
 import { TrackApiClient, TrackQuestionPayload, TrackMaterialPayload, TrackReleasePayload } from '@metyatech/track-tcm-api-client';
+import type { TrackMaterialDraft } from '../types.js';
 
 export interface PublishResult {
   trackQuestionIds: number[];
-  trackMaterialId: number;
+  trackMaterialId?: number;
   trackReleaseId?: string;
+  materialAction: 'created' | 'updated' | 'skipped' | 'dry-run';
+}
+
+export interface PublishOptions {
+  dryRun: boolean;
+  adoptExistingByTitle: boolean;
+  skipMaterial?: boolean;
+}
+
+export function toTrackMaterialPayload(
+  materialDraft: TrackMaterialDraft,
+  questionIds: number[],
+): TrackMaterialPayload {
+  return {
+    title: materialDraft.title,
+    style: materialDraft.style,
+    status: materialDraft.status,
+    language: materialDraft.language,
+    basicTimeMinutes: materialDraft.basicTimeMinutes,
+    difficulty: materialDraft.difficulty,
+    questionIds,
+    materialTypes: materialDraft.materialTypes,
+    availableApps: materialDraft.availableApps,
+  };
+}
+
+function requireClient(client: TrackApiClient | undefined, action: string): TrackApiClient {
+  if (!client) {
+    throw new Error(`Track credentials are required to ${action}.`);
+  }
+
+  return client;
 }
 
 export async function publishToTrack(
-  client: TrackApiClient,
-  materialPayload: TrackMaterialPayload,
+  client: TrackApiClient | undefined,
+  materialDraft: TrackMaterialDraft,
   questionsPayloads: TrackQuestionPayload[],
-  dryRun: boolean,
-  adoptExistingByTitle: boolean
+  options: PublishOptions,
 ): Promise<PublishResult> {
+  const { dryRun, adoptExistingByTitle, skipMaterial = false } = options;
   const publishedQuestionIds: number[] = [];
 
   for (const questionPayload of questionsPayloads) {
@@ -22,17 +55,18 @@ export async function publishToTrack(
       continue;
     }
 
+    const trackClient = requireClient(client, 'publish questions');
     let existingId: number | undefined = undefined;
 
     if (adoptExistingByTitle) {
-      const existingQuestions = await client.findQuestionsByTitle(questionPayload.title);
+      const existingQuestions = await trackClient.findQuestionsByTitle(questionPayload.title);
       const exactMatch = existingQuestions.find(q => q.title === questionPayload.title);
       if (exactMatch) {
         console.log(`[PUBLISH] Adopting existing question: ${questionPayload.title} (ID: ${exactMatch.id})`);
         existingId = exactMatch.id;
       }
     } else {
-      const existingQuestions = await client.findQuestionsByTitle(questionPayload.title);
+      const existingQuestions = await trackClient.findQuestionsByTitle(questionPayload.title);
       const exactMatch = existingQuestions.find(q => q.title === questionPayload.title);
       if (exactMatch) {
          throw new Error(`Duplicate question found: "${questionPayload.title}". Use --adopt-existing-by-title to update.`);
@@ -40,42 +74,46 @@ export async function publishToTrack(
     }
 
     if (existingId !== undefined) {
-       await client.updateQuestion(existingId, questionPayload);
+       await trackClient.updateQuestion(existingId, questionPayload);
        publishedQuestionIds.push(existingId);
     } else {
        console.log(`[PUBLISH] Creating new question: ${questionPayload.title}`);
-       const created = await client.createQuestion(questionPayload);
+       const created = await trackClient.createQuestion(questionPayload);
        publishedQuestionIds.push(created.id);
     }
   }
 
+  if (skipMaterial) {
+    return {
+      trackQuestionIds: publishedQuestionIds,
+      materialAction: 'skipped',
+    };
+  }
+
   // Material
-  let publishedMaterialId = 0;
-  // Replace string IDs in materialPayload with real track IDs
-  const payloadWithRealQuestionIds = {
-    ...materialPayload,
-    questionIds: publishedQuestionIds
-  };
+  const materialPayload = toTrackMaterialPayload(materialDraft, publishedQuestionIds);
 
   if (dryRun) {
     console.log(`[DRY-RUN] Would publish material: ${materialPayload.title}`);
     return {
       trackQuestionIds: publishedQuestionIds,
-      trackMaterialId: 0
+      trackMaterialId: 0,
+      materialAction: 'dry-run',
     };
   }
 
+  const trackClient = requireClient(client, 'publish material');
   let existingMaterialId: number | undefined = undefined;
   
   if (adoptExistingByTitle) {
-    const existingMaterials = await client.findMaterialsByTitle(materialPayload.title);
+    const existingMaterials = await trackClient.findMaterialsByTitle(materialPayload.title);
     const exactMatch = existingMaterials.find(m => m.title === materialPayload.title);
     if (exactMatch) {
       console.log(`[PUBLISH] Adopting existing material: ${materialPayload.title} (ID: ${exactMatch.id})`);
       existingMaterialId = exactMatch.id;
     }
   } else {
-    const existingMaterials = await client.findMaterialsByTitle(materialPayload.title);
+    const existingMaterials = await trackClient.findMaterialsByTitle(materialPayload.title);
     const exactMatch = existingMaterials.find(m => m.title === materialPayload.title);
     if (exactMatch) {
        throw new Error(`Duplicate material found: "${materialPayload.title}". Use --adopt-existing-by-title to update.`);
@@ -83,16 +121,16 @@ export async function publishToTrack(
   }
 
   if (existingMaterialId !== undefined) {
-    await client.updateMaterial(1, existingMaterialId, payloadWithRealQuestionIds);
-    publishedMaterialId = existingMaterialId;
+    await trackClient.updateMaterial(1, existingMaterialId, materialPayload);
     return {
        trackQuestionIds: publishedQuestionIds,
-       trackMaterialId: publishedMaterialId
+       trackMaterialId: existingMaterialId,
+       materialAction: 'updated',
     };
   } else {
     console.log(`[PUBLISH] Creating new material: ${materialPayload.title}`);
-    const created = await client.createMaterial(payloadWithRealQuestionIds);
-    publishedMaterialId = created.id;
+    const created = await trackClient.createMaterial(materialPayload);
+    const publishedMaterialId = created.id;
 
     console.log(`[PUBLISH] Releasing material: ${materialPayload.title}`);
     const releasePayload: TrackReleasePayload = {
@@ -103,12 +141,13 @@ export async function publishToTrack(
       skipReview: true
     };
     
-    const release = await client.createRelease(releasePayload);
+    const release = await trackClient.createRelease(releasePayload);
 
     return {
       trackQuestionIds: publishedQuestionIds,
       trackMaterialId: publishedMaterialId,
-      trackReleaseId: release.id
+      trackReleaseId: release.id,
+      materialAction: 'created',
     };
   }
 }
