@@ -1,4 +1,7 @@
 const DEFAULT_ITEM_TIME_LIMIT_SECONDS = 60;
+function isPositiveFiniteNumber(value) {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
 function toQuestionKind(item) {
     if (item.interactionType === 'choice') {
         return 1;
@@ -45,10 +48,16 @@ function ensureClozePlaceholders(content, correctResponses) {
     return content.length > 0 ? `${content}\n${placeholders}` : placeholders;
 }
 function estimateItemTimeLimitSeconds(item) {
-    if (typeof item.timeLimitSeconds === 'number' && Number.isFinite(item.timeLimitSeconds) && item.timeLimitSeconds > 0) {
+    if (isPositiveFiniteNumber(item.timeLimitSeconds)) {
         return item.timeLimitSeconds;
     }
     return DEFAULT_ITEM_TIME_LIMIT_SECONDS;
+}
+function estimateMaterialTimeLimitSeconds(parsed) {
+    if (isPositiveFiniteNumber(parsed.assessment.timeLimitSeconds)) {
+        return parsed.assessment.timeLimitSeconds;
+    }
+    return parsed.items.reduce((sum, item) => sum + estimateItemTimeLimitSeconds(item), 0);
 }
 function toQuestionPayload(item) {
     const basePayload = {
@@ -78,7 +87,7 @@ function toQuestionPayload(item) {
 }
 export function toTrackPayloads(parsed) {
     const questions = parsed.items.map(toQuestionPayload);
-    const totalSeconds = parsed.items.reduce((sum, item) => sum + estimateItemTimeLimitSeconds(item), 0);
+    const totalSeconds = estimateMaterialTimeLimitSeconds(parsed);
     const material = {
         title: parsed.assessment.title ?? parsed.assessment.identifier,
         style: 1,

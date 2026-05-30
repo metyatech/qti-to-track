@@ -10,6 +10,10 @@ import type {
 
 const DEFAULT_ITEM_TIME_LIMIT_SECONDS = 60;
 
+function isPositiveFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
 function toQuestionKind(item: ParsedQtiItem): 1 | 2 | 3 | 4 {
   if (item.interactionType === 'choice') {
     return 1;
@@ -67,11 +71,19 @@ function ensureClozePlaceholders(content: string, correctResponses: string[]): s
 }
 
 function estimateItemTimeLimitSeconds(item: ParsedQtiItem): number {
-  if (typeof item.timeLimitSeconds === 'number' && Number.isFinite(item.timeLimitSeconds) && item.timeLimitSeconds > 0) {
+  if (isPositiveFiniteNumber(item.timeLimitSeconds)) {
     return item.timeLimitSeconds;
   }
 
   return DEFAULT_ITEM_TIME_LIMIT_SECONDS;
+}
+
+function estimateMaterialTimeLimitSeconds(parsed: ParsedQtiPackage): number {
+  if (isPositiveFiniteNumber(parsed.assessment.timeLimitSeconds)) {
+    return parsed.assessment.timeLimitSeconds;
+  }
+
+  return parsed.items.reduce((sum, item) => sum + estimateItemTimeLimitSeconds(item), 0);
 }
 
 function toQuestionPayload(item: ParsedQtiItem): TrackQuestionPayload {
@@ -109,7 +121,7 @@ export function toTrackPayloads(parsed: ParsedQtiPackage): {
   questions: TrackQuestionPayload[];
 } {
   const questions = parsed.items.map(toQuestionPayload);
-  const totalSeconds = parsed.items.reduce((sum, item) => sum + estimateItemTimeLimitSeconds(item), 0);
+  const totalSeconds = estimateMaterialTimeLimitSeconds(parsed);
 
   const material: TrackMaterialPayload = {
     title: parsed.assessment.title ?? parsed.assessment.identifier,

@@ -1,10 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadQtiPackage, toTrackPayloads } from '../src/index.js';
+import { loadQtiPackage, parseQtiPackageFromXml, toTrackPayloads } from '../src/index.js';
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const fixtureDir = resolve(testDir, 'fixtures/markdown-to-qti');
+
+function buildChoiceItemXml(identifier: string, maxTime: string): string {
+  return `
+    <assessmentItem identifier="${identifier}" title="${identifier}">
+      <itemBody>
+        <p>Pick one.</p>
+        <choiceInteraction responseIdentifier="RESPONSE">
+          <simpleChoice identifier="A">A</simpleChoice>
+        </choiceInteraction>
+      </itemBody>
+      <timeLimits maxTime="${maxTime}" />
+    </assessmentItem>
+  `;
+}
+
+function buildPayloadMinutes(assessmentXml: string, itemXmlByIdentifier: Record<string, string>): number {
+  const parsed = parseQtiPackageFromXml({ assessmentXml, itemXmlByIdentifier });
+  return toTrackPayloads(parsed).material.basicTimeMinutes;
+}
 
 describe('integration: markdown-to-qti fixtures', () => {
   it('loads markdown-to-qti fixture package from directory', async () => {
@@ -45,11 +64,84 @@ describe('integration: markdown-to-qti fixtures', () => {
     expect(descriptiveQuestion?.blanks).toBeUndefined();
   });
 
-  it('rounds material basicTimeMinutes up from summed item time limits', async () => {
+  it('rounds material basicTimeMinutes up from fixture section time limit', async () => {
     const parsed = await loadQtiPackage(fixtureDir);
     const payload = toTrackPayloads(parsed);
 
-    // 65 + 59 + 6 = 130 seconds => ceil(130 / 60) = 3 minutes.
+    // PT2M10S = 130 seconds => ceil(130 / 60) = 3 minutes.
     expect(payload.material.basicTimeMinutes).toBe(3);
+  });
+
+  it('rounds material basicTimeMinutes up from package-level PT2M10S', () => {
+    const assessmentXml = `
+      <assessmentTest identifier="A-PT" title="Package ISO Limit">
+        <testPart identifier="TP-1">
+          <assessmentSection identifier="SEC-1">
+            <assessmentItemRef identifier="ITEM-1" href="item1.xml" />
+            <qti-time-limits max-time="PT2M10S" />
+          </assessmentSection>
+        </testPart>
+      </assessmentTest>
+    `;
+
+    expect(buildPayloadMinutes(assessmentXml, {
+      'ITEM-1': buildChoiceItemXml('ITEM-1', '1'),
+    })).toBe(3);
+  });
+
+  it('rounds material basicTimeMinutes up from numeric package-level seconds', () => {
+    const assessmentXml = `
+      <assessmentTest identifier="A-NUM" title="Package Numeric Limit">
+        <testPart identifier="TP-1">
+          <timeLimits maxTime="130" />
+          <assessmentSection identifier="SEC-1">
+            <assessmentItemRef identifier="ITEM-1" href="item1.xml" />
+          </assessmentSection>
+        </testPart>
+      </assessmentTest>
+    `;
+
+    expect(buildPayloadMinutes(assessmentXml, {
+      'ITEM-1': buildChoiceItemXml('ITEM-1', '1'),
+    })).toBe(3);
+  });
+
+  it('uses package-level time limit instead of summed item time limits', () => {
+    const assessmentXml = `
+      <assessmentTest identifier="A-OVERRIDE" title="Package Override">
+        <testPart identifier="TP-1">
+          <assessmentSection identifier="SEC-1">
+            <assessmentItemRef identifier="ITEM-1" href="item1.xml" />
+            <assessmentItemRef identifier="ITEM-2" href="item2.xml" />
+            <qti-time-limits max-time="PT2M10S" />
+          </assessmentSection>
+        </testPart>
+      </assessmentTest>
+    `;
+
+    expect(buildPayloadMinutes(assessmentXml, {
+      'ITEM-1': buildChoiceItemXml('ITEM-1', '120'),
+      'ITEM-2': buildChoiceItemXml('ITEM-2', '120'),
+    })).toBe(3);
+  });
+
+  it('falls back to summed item time limits when no package-level limit exists', () => {
+    const assessmentXml = `
+      <assessmentTest identifier="A-FALLBACK" title="Item Fallback">
+        <testPart identifier="TP-1">
+          <assessmentSection identifier="SEC-1">
+            <assessmentItemRef identifier="ITEM-1" href="item1.xml" />
+            <assessmentItemRef identifier="ITEM-2" href="item2.xml" />
+            <assessmentItemRef identifier="ITEM-3" href="item3.xml" />
+          </assessmentSection>
+        </testPart>
+      </assessmentTest>
+    `;
+
+    expect(buildPayloadMinutes(assessmentXml, {
+      'ITEM-1': buildChoiceItemXml('ITEM-1', '65'),
+      'ITEM-2': buildChoiceItemXml('ITEM-2', '59'),
+      'ITEM-3': buildChoiceItemXml('ITEM-3', '6'),
+    })).toBe(3);
   });
 });
