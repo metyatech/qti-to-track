@@ -132,6 +132,11 @@ The generated JSON contains two top-level keys:
 - `material` - a `TrackMaterialPayload` object describing the assessment
 - `questions` - an array of `TrackQuestionPayload` objects, one per QTI item
 
+`material.basicTimeMinutes` is derived from package-level QTI `timeLimits maxTime` when the
+assessment, test part, or assessment section defines one. If the package has no package-level
+time limit, it falls back to the existing behavior of summing item-level time limits and
+rounding up to minutes.
+
 Question kinds map as follows:
 
 | QTI interaction type | Track `questionKind` |
