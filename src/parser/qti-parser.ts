@@ -44,6 +44,12 @@ function readStringAttribute(node: XmlRecord, key: string): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+function asRecords(value: unknown): XmlRecord[] {
+  return asArray(value).filter(
+    (node): node is XmlRecord => !!node && typeof node === 'object' && !Array.isArray(node),
+  );
+}
+
 function collectAssessmentItemRefs(node: unknown): XmlRecord[] {
   if (!node || typeof node !== 'object') {
     return [];
@@ -310,18 +316,13 @@ function extractTextEntryPromptFromXml(
   return lines.join('\n').trim();
 }
 
-function parseTimeLimitSeconds(itemNode: XmlRecord): number | undefined {
-  const timeLimitsNode = itemNode.timeLimits;
-  if (!timeLimitsNode || typeof timeLimitsNode !== 'object' || Array.isArray(timeLimitsNode)) {
-    return undefined;
-  }
-
+function parseTimeLimitsNodeSeconds(timeLimitsNode: XmlRecord): number | undefined {
   const rawValue =
-    readStringAttribute(timeLimitsNode as XmlRecord, '@_maxTime') ??
-    readStringAttribute(timeLimitsNode as XmlRecord, '@_max-time') ??
-    readStringAttribute(timeLimitsNode as XmlRecord, '@_maxtime') ??
-    readStringAttribute(timeLimitsNode as XmlRecord, '@_maximum') ??
-    readStringAttribute(timeLimitsNode as XmlRecord, '@_seconds');
+    readStringAttribute(timeLimitsNode, '@_maxTime') ??
+    readStringAttribute(timeLimitsNode, '@_max-time') ??
+    readStringAttribute(timeLimitsNode, '@_maxtime') ??
+    readStringAttribute(timeLimitsNode, '@_maximum') ??
+    readStringAttribute(timeLimitsNode, '@_seconds');
 
   if (!rawValue) {
     return undefined;
@@ -342,6 +343,65 @@ function parseTimeLimitSeconds(itemNode: XmlRecord): number | undefined {
   const seconds = Number(isoMatch[3] ?? 0);
   const totalSeconds = (hours * 60 * 60) + (minutes * 60) + seconds;
   return totalSeconds > 0 ? totalSeconds : undefined;
+}
+
+function parseTimeLimitSeconds(node: XmlRecord): number | undefined {
+  for (const timeLimitsNode of asRecords(node.timeLimits)) {
+    const timeLimitSeconds = parseTimeLimitsNodeSeconds(timeLimitsNode);
+    if (timeLimitSeconds !== undefined) {
+      return timeLimitSeconds;
+    }
+  }
+
+  return undefined;
+}
+
+function findAssessmentSectionTimeLimitSeconds(sectionNode: XmlRecord): number | undefined {
+  const sectionTimeLimitSeconds = parseTimeLimitSeconds(sectionNode);
+  if (sectionTimeLimitSeconds !== undefined) {
+    return sectionTimeLimitSeconds;
+  }
+
+  for (const childSectionNode of asRecords(sectionNode.assessmentSection)) {
+    const childTimeLimitSeconds = findAssessmentSectionTimeLimitSeconds(childSectionNode);
+    if (childTimeLimitSeconds !== undefined) {
+      return childTimeLimitSeconds;
+    }
+  }
+
+  return undefined;
+}
+
+function findTestPartTimeLimitSeconds(testPartNode: XmlRecord): number | undefined {
+  const testPartTimeLimitSeconds = parseTimeLimitSeconds(testPartNode);
+  if (testPartTimeLimitSeconds !== undefined) {
+    return testPartTimeLimitSeconds;
+  }
+
+  for (const sectionNode of asRecords(testPartNode.assessmentSection)) {
+    const sectionTimeLimitSeconds = findAssessmentSectionTimeLimitSeconds(sectionNode);
+    if (sectionTimeLimitSeconds !== undefined) {
+      return sectionTimeLimitSeconds;
+    }
+  }
+
+  return undefined;
+}
+
+function findAssessmentTimeLimitSeconds(assessmentNode: XmlRecord): number | undefined {
+  const assessmentTimeLimitSeconds = parseTimeLimitSeconds(assessmentNode);
+  if (assessmentTimeLimitSeconds !== undefined) {
+    return assessmentTimeLimitSeconds;
+  }
+
+  for (const testPartNode of asRecords(assessmentNode.testPart)) {
+    const testPartTimeLimitSeconds = findTestPartTimeLimitSeconds(testPartNode);
+    if (testPartTimeLimitSeconds !== undefined) {
+      return testPartTimeLimitSeconds;
+    }
+  }
+
+  return undefined;
 }
 
 function extractRubric(itemNode: XmlRecord): string[] {
@@ -379,6 +439,7 @@ export function parseAssessmentXml(xml: string): ParsedAssessment {
   return {
     identifier,
     title: readStringAttribute(assessmentNode, '@_title'),
+    timeLimitSeconds: findAssessmentTimeLimitSeconds(assessmentNode),
     itemRefs,
   };
 }

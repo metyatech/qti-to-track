@@ -29,6 +29,9 @@ function readStringAttribute(node, key) {
     const value = node[key];
     return typeof value === 'string' ? value : undefined;
 }
+function asRecords(value) {
+    return asArray(value).filter((node) => !!node && typeof node === 'object' && !Array.isArray(node));
+}
 function collectAssessmentItemRefs(node) {
     if (!node || typeof node !== 'object') {
         return [];
@@ -232,11 +235,7 @@ function extractTextEntryPromptFromXml(xml, responsesByDeclaration) {
     }
     return lines.join('\n').trim();
 }
-function parseTimeLimitSeconds(itemNode) {
-    const timeLimitsNode = itemNode.timeLimits;
-    if (!timeLimitsNode || typeof timeLimitsNode !== 'object' || Array.isArray(timeLimitsNode)) {
-        return undefined;
-    }
+function parseTimeLimitsNodeSeconds(timeLimitsNode) {
     const rawValue = readStringAttribute(timeLimitsNode, '@_maxTime') ??
         readStringAttribute(timeLimitsNode, '@_max-time') ??
         readStringAttribute(timeLimitsNode, '@_maxtime') ??
@@ -258,6 +257,54 @@ function parseTimeLimitSeconds(itemNode) {
     const seconds = Number(isoMatch[3] ?? 0);
     const totalSeconds = (hours * 60 * 60) + (minutes * 60) + seconds;
     return totalSeconds > 0 ? totalSeconds : undefined;
+}
+function parseTimeLimitSeconds(node) {
+    for (const timeLimitsNode of asRecords(node.timeLimits)) {
+        const timeLimitSeconds = parseTimeLimitsNodeSeconds(timeLimitsNode);
+        if (timeLimitSeconds !== undefined) {
+            return timeLimitSeconds;
+        }
+    }
+    return undefined;
+}
+function findAssessmentSectionTimeLimitSeconds(sectionNode) {
+    const sectionTimeLimitSeconds = parseTimeLimitSeconds(sectionNode);
+    if (sectionTimeLimitSeconds !== undefined) {
+        return sectionTimeLimitSeconds;
+    }
+    for (const childSectionNode of asRecords(sectionNode.assessmentSection)) {
+        const childTimeLimitSeconds = findAssessmentSectionTimeLimitSeconds(childSectionNode);
+        if (childTimeLimitSeconds !== undefined) {
+            return childTimeLimitSeconds;
+        }
+    }
+    return undefined;
+}
+function findTestPartTimeLimitSeconds(testPartNode) {
+    const testPartTimeLimitSeconds = parseTimeLimitSeconds(testPartNode);
+    if (testPartTimeLimitSeconds !== undefined) {
+        return testPartTimeLimitSeconds;
+    }
+    for (const sectionNode of asRecords(testPartNode.assessmentSection)) {
+        const sectionTimeLimitSeconds = findAssessmentSectionTimeLimitSeconds(sectionNode);
+        if (sectionTimeLimitSeconds !== undefined) {
+            return sectionTimeLimitSeconds;
+        }
+    }
+    return undefined;
+}
+function findAssessmentTimeLimitSeconds(assessmentNode) {
+    const assessmentTimeLimitSeconds = parseTimeLimitSeconds(assessmentNode);
+    if (assessmentTimeLimitSeconds !== undefined) {
+        return assessmentTimeLimitSeconds;
+    }
+    for (const testPartNode of asRecords(assessmentNode.testPart)) {
+        const testPartTimeLimitSeconds = findTestPartTimeLimitSeconds(testPartNode);
+        if (testPartTimeLimitSeconds !== undefined) {
+            return testPartTimeLimitSeconds;
+        }
+    }
+    return undefined;
 }
 function extractRubric(itemNode) {
     return asArray(itemNode.rubricBlock)
@@ -286,6 +333,7 @@ export function parseAssessmentXml(xml) {
     return {
         identifier,
         title: readStringAttribute(assessmentNode, '@_title'),
+        timeLimitSeconds: findAssessmentTimeLimitSeconds(assessmentNode),
         itemRefs,
     };
 }

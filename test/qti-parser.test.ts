@@ -28,6 +28,7 @@ describe('qti-parser', () => {
           <assessment-test:assessmentSection identifier="SEC-1">
             <assessment-test:assessmentItemRef identifier="ITEM-1" href="items/item1.xml" />
             <assessment-test:assessmentItemRef identifier="ITEM-2" href="items/item2.xml" />
+            <assessment-test:timeLimits maxTime="PT2M10S" />
           </assessment-test:assessmentSection>
         </assessment-test:testPart>
       </assessment-test:assessmentTest>
@@ -36,6 +37,7 @@ describe('qti-parser', () => {
     const parsed = parseAssessmentXml(assessmentXml);
     expect(parsed.identifier).toBe('A-1');
     expect(parsed.title).toBe('Unit Test');
+    expect(parsed.timeLimitSeconds).toBe(130);
     expect(parsed.itemRefs).toEqual([
       { identifier: 'ITEM-1', href: 'items/item1.xml' },
       { identifier: 'ITEM-2', href: 'items/item2.xml' },

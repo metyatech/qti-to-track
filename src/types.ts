@@ -43,6 +43,7 @@ export interface ParsedAssessmentItemRef {
 export interface ParsedAssessment {
   identifier: string;
   title?: string;
+  timeLimitSeconds?: number;
   itemRefs: ParsedAssessmentItemRef[];
 }
 
