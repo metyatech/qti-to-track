@@ -1,34 +1,14 @@
 export type TrackQuestionType = 'choice' | 'text-entry' | 'extended-text';
-export interface TrackMaterialPayload {
+export interface TrackMaterialDraft {
     title: string;
     style: number;
     status: number;
     language: string;
     basicTimeMinutes: number;
     difficulty: number;
-    questionIds: string[];
-    materialTypes: number[];
+    questionKeys: string[];
+    materialTypes: string[];
     availableApps: string[];
-}
-export interface TrackChoicePayload {
-    content: string;
-    correct: boolean;
-}
-export interface TrackBlankPayload {
-    answer: string;
-    kind: 'exact' | 'regex';
-    caseSensitive: boolean;
-}
-export interface TrackQuestionPayload {
-    title: string;
-    questionKind: 1 | 2 | 3 | 4;
-    status: number;
-    content: string;
-    howToSolve: string;
-    quizCategories: number[];
-    availableApps: string[];
-    choices?: TrackChoicePayload[];
-    blanks?: TrackBlankPayload[];
 }
 export interface ParsedAssessmentItemRef {
     identifier: string;
@@ -45,6 +25,11 @@ export interface ParsedQtiChoice {
     text: string;
 }
 export type ParsedChoice = ParsedQtiChoice;
+export interface ParsedBlank {
+    responseIdentifier: string;
+    answer: string;
+    kind: 'exact' | 'regex';
+}
 export interface ParsedQtiItem {
     identifier: string;
     title: string;
@@ -53,6 +38,7 @@ export interface ParsedQtiItem {
     timeLimitSeconds?: number;
     choices: ParsedQtiChoice[];
     correctResponses: string[];
+    blanks: ParsedBlank[];
     rubric: string[];
     feedback: string[];
 }

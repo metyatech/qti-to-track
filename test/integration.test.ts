@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadQtiPackage, parseQtiPackageFromXml, toTrackPayloads } from '../src/index.js';
+import { toTrackMaterialPayload } from '../src/publish/publisher.js';
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const fixtureDir = resolve(testDir, 'fixtures/markdown-to-qti');
@@ -22,7 +23,7 @@ function buildChoiceItemXml(identifier: string, maxTime: string): string {
 
 function buildPayloadMinutes(assessmentXml: string, itemXmlByIdentifier: Record<string, string>): number {
   const parsed = parseQtiPackageFromXml({ assessmentXml, itemXmlByIdentifier });
-  return toTrackPayloads(parsed).material.basicTimeMinutes;
+  return toTrackPayloads(parsed).materialDraft.basicTimeMinutes;
 }
 
 describe('integration: markdown-to-qti fixtures', () => {
@@ -40,8 +41,9 @@ describe('integration: markdown-to-qti fixtures', () => {
     const parsed = await loadQtiPackage(fixtureDir);
     const payload = toTrackPayloads(parsed);
 
-    expect(payload.material.title).toBe('Markdown to QTI Sample Test');
-    expect(payload.material.questionIds).toEqual(['choice-item', 'cloze-item', 'descriptive-item']);
+    expect(payload.materialDraft.title).toBe('Markdown to QTI Sample Test');
+    expect(payload.materialDraft.questionKeys).toEqual(['choice-item', 'cloze-item', 'descriptive-item']);
+    expect(payload.materialDraft.materialTypes).toEqual(['others']);
 
     const choiceQuestion = payload.questions.find((question) => question.title === 'Choice Item');
     expect(choiceQuestion?.questionKind).toBe(1);
@@ -69,7 +71,19 @@ describe('integration: markdown-to-qti fixtures', () => {
     const payload = toTrackPayloads(parsed);
 
     // PT2M10S = 130 seconds => ceil(130 / 60) = 3 minutes.
-    expect(payload.material.basicTimeMinutes).toBe(3);
+    expect(payload.materialDraft.basicTimeMinutes).toBe(3);
+  });
+
+  it('builds API material payload with numeric question IDs and string material types', async () => {
+    const parsed = await loadQtiPackage(fixtureDir);
+    const payload = toTrackPayloads(parsed, { materialType: 'js-css-html' });
+
+    const materialPayload = toTrackMaterialPayload(payload.materialDraft, [101, 102, 103]);
+
+    expect(materialPayload.questionIds).toEqual([101, 102, 103]);
+    expect(materialPayload.questionIds.every((id) => typeof id === 'number')).toBe(true);
+    expect(materialPayload.materialTypes).toEqual(['js-css-html']);
+    expect(materialPayload.materialTypes.every((type) => typeof type === 'string')).toBe(true);
   });
 
   it('rounds material basicTimeMinutes up from package-level PT2M10S', () => {

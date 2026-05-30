@@ -10,13 +10,18 @@ export {
 export type {
   ParsedAssessment,
   ParsedAssessmentItemRef,
+  ParsedBlank,
   ParsedChoice,
   ParsedQtiChoice,
   ParsedQtiItem,
   ParsedQtiPackage,
+  TrackMaterialDraft,
+  TrackQuestionType,
+} from './types.js';
+
+export type {
   TrackBlankPayload,
   TrackChoicePayload,
   TrackMaterialPayload,
   TrackQuestionPayload,
-  TrackQuestionType,
-} from './types.js';
+} from '@metyatech/track-tcm-api-client';

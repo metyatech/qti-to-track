@@ -106,7 +106,30 @@ describe('qti-parser', () => {
 
     expect(textEntry.interactionType).toBe('text-entry');
     expect(textEntry.correctResponses).toEqual(['oxygen']);
+    expect(textEntry.blanks).toEqual([
+      { responseIdentifier: 'RESPONSE', answer: 'oxygen', kind: 'exact' },
+    ]);
     expect(extendedText.interactionType).toBe('extended-text');
+  });
+
+  it('preserves regex text-entry declarations from interpretation', () => {
+    const itemXml = `
+      <qti-assessment-item identifier="ITEM-REGEX" title="Regex Blank">
+        <qti-response-declaration identifier="RESPONSE" cardinality="single" base-type="string" interpretation="regex">
+          <qti-correct-response><qti-value>transform|all</qti-value></qti-correct-response>
+        </qti-response-declaration>
+        <qti-item-body>
+          <qti-p>Match <qti-text-entry-interaction response-identifier="RESPONSE" expected-length="13" />.</qti-p>
+        </qti-item-body>
+      </qti-assessment-item>
+    `;
+
+    const parsed = parseAssessmentItemXml(itemXml);
+
+    expect(parsed.blanks).toEqual([
+      { responseIdentifier: 'RESPONSE', answer: 'transform|all', kind: 'regex' },
+    ]);
+    expect(parsed.prompt).toBe('Match ${/transform|all/}.');
   });
 
   it('parses package from assessment and item map', () => {

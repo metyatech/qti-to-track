@@ -1,12 +1,49 @@
 #!/usr/bin/env node
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { Command } from 'commander';
+import yaml from 'yaml';
 import { loadQtiPackage } from '../fs/qti-loader.js';
 import { toTrackPayloads } from '../generator/track-generator.js';
-import { loadTrackMap, saveTrackMap, hashTrackSource } from '../publish/track-map.js';
-import { publishToTrack } from '../publish/publisher.js';
+import { loadTrackMap, saveTrackMap, updateTrackMapForPublish } from '../publish/track-map.js';
+import { publishToTrack, toTrackMaterialPayload } from '../publish/publisher.js';
 const program = new Command();
+const DEFAULT_BASE_URL = 'https://tracks.dev';
+function pickString(...values) {
+    for (const value of values) {
+        if (typeof value === 'string' && value.length > 0) {
+            return value;
+        }
+    }
+    return undefined;
+}
+function readNestedString(record, path) {
+    let value = record;
+    for (const segment of path) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+            return undefined;
+        }
+        value = value[segment];
+    }
+    return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+async function loadSession(filePath) {
+    if (!filePath) {
+        return {};
+    }
+    const content = await readFile(filePath, 'utf8');
+    const parsed = yaml.parse(content);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error(`Invalid Track session file: ${filePath}`);
+    }
+    const record = parsed;
+    return {
+        baseUrl: pickString(record.baseUrl, record.base_url, readNestedString(record, ['target', 'base_url']), readNestedString(record, ['target', 'baseUrl'])),
+        appspace: pickString(record.appspace, readNestedString(record, ['target', 'appspace']), readNestedString(record, ['track', 'appspace'])),
+        cookie: pickString(record.cookie, readNestedString(record, ['credentials', 'cookie']), readNestedString(record, ['auth', 'cookie']), readNestedString(record, ['track', 'cookie'])),
+        authorization: pickString(record.authorization, readNestedString(record, ['credentials', 'authorization']), readNestedString(record, ['auth', 'authorization']), readNestedString(record, ['track', 'authorization'])),
+    };
+}
 program
     .name('qti-to-track')
     .description('Convert QTI XML package to Track JSON payloads');
@@ -29,13 +66,14 @@ program
     .requiredOption('--qti-dir <dir>', 'directory path that contains QTI XML files')
     .requiredOption('--output <file>', 'output JSON file path')
     .option('--upload-images', 'upload local images to Track API and replace paths with remote URLs', false)
+    .option('--material-type <type>', 'Track material type (default: others)', 'others')
     .option('--appspace <appspace>', 'Track appspace ID (required for --upload-images)')
     .option('--authorization <token>', 'Track authorization header (optional)')
     .option('--cookie <cookie>', 'Track cookie header (optional)')
     .option('--base-url <url>', 'Track base URL', 'https://tracks.dev')
     .action(async (options) => {
     const parsedQti = await loadQtiPackage(options.qtiDir);
-    let payload = toTrackPayloads(parsedQti);
+    let payload = toTrackPayloads(parsedQti, { materialType: options.materialType });
     if (options.uploadImages) {
         if (!options.appspace || (!options.authorization && !options.cookie)) {
             console.error('Error: --appspace and either --authorization or --cookie are required when using --upload-images');
@@ -58,36 +96,64 @@ program
     .command('publish')
     .description('Publish QTI package directly to Track LMS')
     .requiredOption('--qti-dir <dir>', 'directory path that contains QTI XML files')
-    .requiredOption('--appspace <id>', 'Track appspace ID')
-    .option('--base-url <url>', 'Track base URL', 'https://tracks.dev')
+    .option('--appspace <id>', 'Track appspace ID')
+    .option('--base-url <url>', 'Track base URL')
+    .option('--authorization <token>', 'Track authorization header')
+    .option('--cookie <cookie>', 'Track cookie header')
+    .option('--session <path>', 'weekly-quiz-workbench saved Track session file')
     .option('--track-map <path>', 'path to track-map.yaml file')
+    .option('--no-track-map', 'disable all track-map read/write')
+    .option('--material-title <title>', 'override QTI assessment title for Track material')
+    .option('--material-type <type>', 'Track material type (default: others)', 'others')
+    .option('--no-material', 'publish questions only; skip material and release creation')
     .option('--yes', 'actually execute the publish (otherwise performs a dry-run)', false)
     .option('--json', 'print JSON output of the result', false)
     .option('--adopt-existing-by-title', 'update existing questions/materials with matching titles', false)
+    .option('--check-existing', 'perform duplicate checks during dry-run; requires Track credentials', false)
     .option('--upload-images', 'upload local images to Track API and replace paths with remote URLs', false)
     .action(async (options) => {
     try {
+        const hasTrackMapArg = process.argv.some((arg) => arg === '--track-map' || arg.startsWith('--track-map='));
+        if (hasTrackMapArg && process.argv.includes('--no-track-map')) {
+            throw new Error('--track-map and --no-track-map cannot be used together');
+        }
+        const trackMapPath = typeof options.trackMap === 'string' ? options.trackMap : undefined;
+        const trackMapDisabled = options.trackMap === false;
         const isDryRun = !options.yes;
         if (isDryRun && !options.json) {
             console.log('[DRY-RUN] Executing publish in dry-run mode. No changes will be made.');
         }
         // 1. Resolve credentials
-        const cookie = process.env.TRACK_TCM_COOKIE;
-        const authorization = process.env.TRACK_TCM_AUTHORIZATION;
-        if (!cookie && !authorization) {
-            console.error('Error: TRACK_TCM_COOKIE or TRACK_TCM_AUTHORIZATION environment variable is required');
-            process.exit(1);
+        const session = await loadSession(options.session);
+        const appspace = options.appspace ?? process.env.TRACK_TCM_APPSPACE ?? session.appspace;
+        const baseUrl = options.baseUrl ?? process.env.TRACK_TCM_BASE_URL ?? session.baseUrl ?? DEFAULT_BASE_URL;
+        const cookie = options.cookie ?? process.env.TRACK_TCM_COOKIE ?? session.cookie;
+        const authorization = options.authorization ?? process.env.TRACK_TCM_AUTHORIZATION ?? session.authorization;
+        const needsTrackClient = !isDryRun ||
+            options.uploadImages ||
+            options.adoptExistingByTitle ||
+            options.checkExisting;
+        if (needsTrackClient && !appspace) {
+            throw new Error('Track appspace is required. Use --appspace, TRACK_TCM_APPSPACE, or --session.');
+        }
+        if (needsTrackClient && !cookie && !authorization) {
+            throw new Error('Track credentials are required. Use --cookie/--authorization, TRACK_TCM_COOKIE/TRACK_TCM_AUTHORIZATION, or --session.');
         }
         const { createTrackApiClient } = await import('@metyatech/track-tcm-api-client');
-        const apiClient = createTrackApiClient({
-            appspace: options.appspace,
-            authorization,
-            cookie,
-            baseUrl: options.baseUrl,
-        });
+        const apiClient = needsTrackClient
+            ? createTrackApiClient({
+                appspace: appspace,
+                authorization,
+                cookie,
+                baseUrl,
+            })
+            : undefined;
         // 2. Parse QTI and generate payload
         const parsedQti = await loadQtiPackage(options.qtiDir);
-        let payload = toTrackPayloads(parsedQti);
+        let payload = toTrackPayloads(parsedQti, {
+            materialTitle: options.materialTitle,
+            materialType: options.materialType,
+        });
         // 3. Upload images if requested
         if (options.uploadImages) {
             if (!options.json)
@@ -97,49 +163,34 @@ program
         }
         // 4. Load track-map
         let trackMap = { version: 1 };
-        if (options.trackMap) {
-            trackMap = await loadTrackMap(options.trackMap);
+        const useTrackMap = !trackMapDisabled && Boolean(trackMapPath);
+        if (useTrackMap) {
+            trackMap = await loadTrackMap(trackMapPath);
         }
         // 5. Publish
-        const publishResult = await publishToTrack(apiClient, payload.material, // Cast because questionIds are string[] in toTrackPayloads but numbers are required for the client
-        payload.questions, isDryRun, options.adoptExistingByTitle);
+        const publishResult = await publishToTrack(apiClient, payload.materialDraft, payload.questions, {
+            dryRun: isDryRun,
+            adoptExistingByTitle: options.adoptExistingByTitle || options.checkExisting,
+            skipMaterial: options.material === false,
+        });
         // 6. Update track-map
-        if (!isDryRun && options.trackMap) {
-            if (!trackMap.target) {
-                trackMap.target = { base_url: options.baseUrl, appspace: options.appspace };
-            }
-            if (!trackMap.questions)
-                trackMap.questions = {};
-            if (!trackMap.materials)
-                trackMap.materials = {};
-            const timestamp = new Date().toISOString();
-            const baseKey = 'qti';
-            // Update questions
-            parsedQti.items.forEach((item, index) => {
-                const qPayload = payload.questions[index];
-                const hash = hashTrackSource(JSON.stringify(qPayload));
-                const questionKey = `${baseKey}/${item.identifier}`;
-                trackMap.questions[questionKey] = {
-                    track_question_id: publishResult.trackQuestionIds[index],
-                    title: qPayload.title,
-                    source_hash: hash,
-                    updated_at: timestamp
-                };
+        if (!isDryRun && useTrackMap) {
+            const materialPayload = options.material === false || publishResult.trackMaterialId === undefined
+                ? undefined
+                : toTrackMaterialPayload(payload.materialDraft, publishResult.trackQuestionIds);
+            const updatedTrackMap = updateTrackMapForPublish({
+                trackMap,
+                target: { base_url: baseUrl, appspace: appspace },
+                baseKey: 'qti',
+                questionKeys: parsedQti.items.map((item) => item.identifier),
+                questionPayloads: payload.questions,
+                materialDraft: payload.materialDraft,
+                materialPayload,
+                result: publishResult,
             });
-            // Update material
-            const mPayload = payload.material;
-            const hash = hashTrackSource(JSON.stringify(mPayload));
-            const materialKey = `${baseKey}/${parsedQti.assessment.identifier}`;
-            trackMap.materials[materialKey] = {
-                track_material_id: publishResult.trackMaterialId,
-                title: mPayload.title,
-                question_keys: parsedQti.items.map((item) => `${baseKey}/${item.identifier}`),
-                updated_at: timestamp,
-                release_id: publishResult.trackReleaseId
-            };
-            await saveTrackMap(options.trackMap, trackMap);
+            await saveTrackMap(trackMapPath, updatedTrackMap);
             if (!options.json) {
-                console.log(`Updated track-map at ${options.trackMap}`);
+                console.log(`Updated track-map at ${trackMapPath}`);
             }
         }
         if (options.json) {
@@ -147,7 +198,7 @@ program
         }
         else {
             console.log(`\nPublish complete!`);
-            console.log(`Material ID: ${publishResult.trackMaterialId}`);
+            console.log(`Material: ${publishResult.materialAction}${publishResult.trackMaterialId !== undefined ? ` (${publishResult.trackMaterialId})` : ''}`);
             console.log(`Question IDs: ${publishResult.trackQuestionIds.join(', ')}`);
             if (publishResult.trackReleaseId) {
                 console.log(`Release ID: ${publishResult.trackReleaseId}`);

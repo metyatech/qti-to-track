@@ -29,6 +29,18 @@ function readStringAttribute(node, key) {
     const value = node[key];
     return typeof value === 'string' ? value : undefined;
 }
+function readAnyStringAttribute(node, keys) {
+    for (const key of keys) {
+        const value = readStringAttribute(node, key);
+        if (value !== undefined) {
+            return value;
+        }
+    }
+    return undefined;
+}
+function readResponseIdentifierAttribute(node) {
+    return readAnyStringAttribute(node, ['@_responseIdentifier', '@_response-identifier']);
+}
 function asRecords(value) {
     return asArray(value).filter((node) => !!node && typeof node === 'object' && !Array.isArray(node));
 }
@@ -107,28 +119,12 @@ function extractChoices(interaction, interactionType) {
         .filter((choice) => choice.identifier.length > 0);
 }
 function extractCorrectResponses(itemNode) {
-    const declarations = asArray(itemNode.responseDeclaration)
-        .filter((value) => !!value && typeof value === 'object' && !Array.isArray(value));
-    const responses = [];
-    for (const declaration of declarations) {
-        const correctResponse = declaration.correctResponse;
-        if (!correctResponse || typeof correctResponse !== 'object' || Array.isArray(correctResponse)) {
-            continue;
-        }
-        const valueNode = correctResponse.value;
-        for (const value of asArray(valueNode)) {
-            const text = getTextContent(value).trim();
-            if (text) {
-                responses.push(text);
-            }
-        }
-    }
-    return responses;
+    return extractResponseDeclarations(itemNode).flatMap((declaration) => declaration.values);
 }
-function extractCorrectResponsesByDeclaration(itemNode) {
+function extractResponseDeclarations(itemNode) {
     const declarations = asArray(itemNode.responseDeclaration)
         .filter((value) => !!value && typeof value === 'object' && !Array.isArray(value));
-    const map = {};
+    const parsedDeclarations = [];
     for (const declaration of declarations) {
         const declarationId = readStringAttribute(declaration, '@_identifier');
         if (!declarationId) {
@@ -147,23 +143,42 @@ function extractCorrectResponsesByDeclaration(itemNode) {
             }
         }
         if (values.length > 0) {
-            map[declarationId] = values;
+            const interpretationKind = readStringAttribute(declaration, '@_interpretation') === 'regex' ? 'regex' : 'exact';
+            const kind = interpretationKind === 'regex' ||
+                (values.length === 1 && values[0].length >= 2 && values[0].startsWith('/') && values[0].endsWith('/'))
+                ? 'regex'
+                : 'exact';
+            parsedDeclarations.push({
+                identifier: declarationId,
+                values: kind === 'regex' ? values.map((value) => value.replace(/^\/(.+)\/$/u, '$1')) : values,
+                kind,
+            });
         }
+    }
+    return parsedDeclarations;
+}
+function extractCorrectResponsesByDeclaration(itemNode) {
+    const map = {};
+    for (const declaration of extractResponseDeclarations(itemNode)) {
+        map[declaration.identifier] = declaration;
     }
     return map;
 }
-function formatBlankPlaceholder(answer) {
-    return answer.length > 0 ? `\${${answer}}` : '${}';
+function formatBlankPlaceholder(blank) {
+    if (!blank || blank.answer.length === 0) {
+        return '${}';
+    }
+    return blank.kind === 'regex' ? `\${/${blank.answer}/}` : `\${${blank.answer}}`;
 }
 function extractTextEntryPromptFromXml(xml, responsesByDeclaration) {
     const preserveParsed = preserveOrderXmlParser.parse(xml);
     if (!Array.isArray(preserveParsed) || preserveParsed.length === 0) {
-        return '';
+        return { prompt: '', responseIdentifiers: [] };
     }
     const rootNode = preserveParsed[0];
     const assessmentItemNodes = rootNode.assessmentItem;
     if (!Array.isArray(assessmentItemNodes)) {
-        return '';
+        return { prompt: '', responseIdentifiers: [] };
     }
     const itemBodyEntry = assessmentItemNodes.find((entry) => {
         if (!entry || typeof entry !== 'object') {
@@ -172,13 +187,14 @@ function extractTextEntryPromptFromXml(xml, responsesByDeclaration) {
         return 'itemBody' in entry;
     });
     if (!itemBodyEntry) {
-        return '';
+        return { prompt: '', responseIdentifiers: [] };
     }
     const itemBodyNodes = itemBodyEntry.itemBody;
     if (!Array.isArray(itemBodyNodes)) {
-        return '';
+        return { prompt: '', responseIdentifiers: [] };
     }
     const lines = [];
+    const responseIdentifiers = [];
     for (const node of itemBodyNodes) {
         if (!node || typeof node !== 'object') {
             continue;
@@ -204,10 +220,19 @@ function extractTextEntryPromptFromXml(xml, responsesByDeclaration) {
                 if ('textEntryInteraction' in childRecord) {
                     const attrs = childRecord[':@'];
                     const responseIdentifier = attrs && typeof attrs === 'object' && !Array.isArray(attrs)
-                        ? readStringAttribute(attrs, '@_responseIdentifier')
+                        ? readResponseIdentifierAttribute(attrs)
                         : undefined;
-                    const responseValues = responseIdentifier ? responsesByDeclaration[responseIdentifier] : undefined;
-                    const placeholder = formatBlankPlaceholder(responseValues?.[0] ?? '');
+                    const responseDeclaration = responseIdentifier ? responsesByDeclaration[responseIdentifier] : undefined;
+                    if (responseIdentifier) {
+                        responseIdentifiers.push(responseIdentifier);
+                    }
+                    const placeholder = formatBlankPlaceholder(responseIdentifier
+                        ? {
+                            responseIdentifier,
+                            answer: responseDeclaration?.values[0] ?? '',
+                            kind: responseDeclaration?.kind ?? 'exact',
+                        }
+                        : undefined);
                     chunks.push(placeholder);
                 }
                 else if ('img' in childRecord || 'qti-img' in childRecord) {
@@ -233,7 +258,7 @@ function extractTextEntryPromptFromXml(xml, responsesByDeclaration) {
             }
         }
     }
-    return lines.join('\n').trim();
+    return { prompt: lines.join('\n').trim(), responseIdentifiers };
 }
 function parseTimeLimitsNodeSeconds(timeLimitsNode) {
     const rawValue = readStringAttribute(timeLimitsNode, '@_maxTime') ??
@@ -352,14 +377,33 @@ export function parseAssessmentItemXml(xml) {
     const textEntryPrompt = interactionType === 'text-entry'
         ? extractTextEntryPromptFromXml(xml, responsesByDeclaration)
         : undefined;
+    const blanks = interactionType === 'text-entry'
+        ? (textEntryPrompt && textEntryPrompt.responseIdentifiers.length > 0
+            ? textEntryPrompt.responseIdentifiers
+            : Object.keys(responsesByDeclaration))
+            .map((responseIdentifier) => {
+            const declaration = responsesByDeclaration[responseIdentifier];
+            const answer = declaration?.values[0];
+            if (!answer) {
+                return undefined;
+            }
+            return {
+                responseIdentifier,
+                answer,
+                kind: declaration.kind,
+            };
+        })
+            .filter((blank) => blank !== undefined)
+        : [];
     return {
         identifier,
         title,
         interactionType,
-        prompt: textEntryPrompt && textEntryPrompt.length > 0 ? textEntryPrompt : extractPrompt(itemBody),
+        prompt: textEntryPrompt && textEntryPrompt.prompt.length > 0 ? textEntryPrompt.prompt : extractPrompt(itemBody),
         timeLimitSeconds: parseTimeLimitSeconds(itemNode),
         choices: extractChoices(interaction, interactionType),
         correctResponses: extractCorrectResponses(itemNode),
+        blanks,
         rubric: extractRubric(itemNode),
         feedback: extractFeedback(itemNode),
     };

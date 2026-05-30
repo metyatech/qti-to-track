@@ -2,11 +2,13 @@ import type {
   ParsedChoice,
   ParsedQtiItem,
   ParsedQtiPackage,
+  TrackMaterialDraft,
+} from '../types.js';
+import type {
   TrackBlankPayload,
   TrackChoicePayload,
-  TrackMaterialPayload,
   TrackQuestionPayload,
-} from '../types.js';
+} from '@metyatech/track-tcm-api-client';
 
 const DEFAULT_ITEM_TIME_LIMIT_SECONDS = 60;
 
@@ -26,22 +28,10 @@ function toQuestionKind(item: ParsedQtiItem): 1 | 2 | 3 | 4 {
   return 4;
 }
 
-function isRegexAnswer(value: string): boolean {
-  return value.length >= 2 && value.startsWith('/') && value.endsWith('/');
-}
-
-function toTrackBlankPayload(answer: string): TrackBlankPayload {
-  if (isRegexAnswer(answer)) {
-    return {
-      answer: answer.slice(1, -1),
-      kind: 'regex',
-      caseSensitive: false,
-    };
-  }
-
+function toTrackBlankPayload(blank: ParsedQtiItem['blanks'][number]): TrackBlankPayload {
   return {
-    answer,
-    kind: 'exact',
+    answer: blank.answer,
+    kind: blank.kind,
     caseSensitive: false,
   };
 }
@@ -53,12 +43,16 @@ function toTrackChoicePayload(choice: ParsedChoice, correctResponses: Set<string
   };
 }
 
-function toPlaceholder(answer: string): string {
-  return answer.length > 0 ? `\${${answer}}` : '${}';
+function toPlaceholder(blank: ParsedQtiItem['blanks'][number]): string {
+  if (blank.answer.length === 0) {
+    return '${}';
+  }
+
+  return blank.kind === 'regex' ? `\${/${blank.answer}/}` : `\${${blank.answer}}`;
 }
 
-function ensureClozePlaceholders(content: string, correctResponses: string[]): string {
-  if (correctResponses.length === 0) {
+function ensureClozePlaceholders(content: string, blanks: ParsedQtiItem['blanks']): string {
+  if (blanks.length === 0) {
     return content;
   }
 
@@ -66,7 +60,7 @@ function ensureClozePlaceholders(content: string, correctResponses: string[]): s
     return content;
   }
 
-  const placeholders = correctResponses.map(toPlaceholder).join(' ');
+  const placeholders = blanks.map(toPlaceholder).join(' ');
   return content.length > 0 ? `${content}\n${placeholders}` : placeholders;
 }
 
@@ -108,35 +102,35 @@ function toQuestionPayload(item: ParsedQtiItem): TrackQuestionPayload {
   if (item.interactionType === 'text-entry') {
     return {
       ...basePayload,
-      content: ensureClozePlaceholders(item.prompt, item.correctResponses),
-      blanks: item.correctResponses.map(toTrackBlankPayload),
+      content: ensureClozePlaceholders(item.prompt, item.blanks),
+      blanks: item.blanks.map(toTrackBlankPayload),
     };
   }
 
   return basePayload;
 }
 
-export function toTrackPayloads(parsed: ParsedQtiPackage): {
-  material: TrackMaterialPayload;
+export function toTrackPayloads(parsed: ParsedQtiPackage, options: { materialType?: string; materialTitle?: string } = {}): {
+  materialDraft: TrackMaterialDraft;
   questions: TrackQuestionPayload[];
 } {
   const questions = parsed.items.map(toQuestionPayload);
   const totalSeconds = estimateMaterialTimeLimitSeconds(parsed);
 
-  const material: TrackMaterialPayload = {
-    title: parsed.assessment.title ?? parsed.assessment.identifier,
+  const materialDraft: TrackMaterialDraft = {
+    title: options.materialTitle ?? parsed.assessment.title ?? parsed.assessment.identifier,
     style: 1,
     status: 2,
     language: 'ja',
     basicTimeMinutes: Math.max(1, Math.ceil(totalSeconds / 60)),
     difficulty: 1,
-    questionIds: parsed.items.map((item) => item.identifier),
-    materialTypes: [1],
+    questionKeys: parsed.items.map((item) => item.identifier),
+    materialTypes: [options.materialType ?? 'others'],
     availableApps: ['training'],
   };
 
   return {
-    material,
+    materialDraft,
     questions,
   };
 }

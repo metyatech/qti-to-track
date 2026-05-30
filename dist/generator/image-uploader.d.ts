@@ -1,4 +1,4 @@
-import { type TrackQuestionPayload } from '../types.js';
+import type { TrackQuestionPayload } from '@metyatech/track-tcm-api-client';
 interface TrackApiClientUpload {
     uploadImage(file: Blob, filename: string): Promise<string>;
 }

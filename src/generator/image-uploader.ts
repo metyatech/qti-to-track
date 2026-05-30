@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { resolve, join, dirname } from 'node:path';
-import { type TrackQuestionPayload, type TrackMaterialPayload, type TrackChoicePayload } from '../types.js';
+import type { TrackChoicePayload, TrackQuestionPayload } from '@metyatech/track-tcm-api-client';
 
 interface TrackApiClientUpload {
   uploadImage(file: Blob, filename: string): Promise<string>;
