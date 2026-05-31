@@ -217,6 +217,48 @@ result.textContent = &quot;変更後&quot;;
     expect(parsed.prompt).toBe('Match ${/transform|all/}.');
   });
 
+  it('preserves text-entry placeholders inside code blocks', () => {
+    const itemXml = `
+      <qti-assessment-item identifier="ITEM-CODE-CLOZE" title="Code Cloze">
+        <qti-response-declaration identifier="RESPONSE_1" cardinality="single" base-type="string">
+          <qti-correct-response><qti-value>C</qti-value></qti-correct-response>
+        </qti-response-declaration>
+        <qti-response-declaration identifier="RESPONSE_2" cardinality="single" base-type="string">
+          <qti-correct-response><qti-value>A</qti-value></qti-correct-response>
+        </qti-response-declaration>
+        <qti-response-declaration identifier="RESPONSE_3" cardinality="single" base-type="string">
+          <qti-correct-response><qti-value>D</qti-value></qti-correct-response>
+        </qti-response-declaration>
+        <qti-item-body>
+          <qti-p>次の語群から選び、空欄を埋めなさい。</qti-p>
+          <qti-pre><qti-code>Create Widget は </qti-code><qti-text-entry-interaction response-identifier="RESPONSE_1"/><qti-code> である。
+Add to Viewport は </qti-code><qti-text-entry-interaction response-identifier="RESPONSE_2"/><qti-code> である。
+Event Graph は </qti-code><qti-text-entry-interaction response-identifier="RESPONSE_3"/><qti-code> である。
+</qti-code></qti-pre>
+        </qti-item-body>
+      </qti-assessment-item>
+    `;
+
+    const parsed = parseAssessmentItemXml(itemXml);
+
+    expect(parsed.prompt).toBe(
+      [
+        '次の語群から選び、空欄を埋めなさい。',
+        '',
+        '```',
+        'Create Widget は ${C} である。',
+        'Add to Viewport は ${A} である。',
+        'Event Graph は ${D} である。',
+        '```',
+      ].join('\n'),
+    );
+    expect(parsed.blanks).toEqual([
+      { responseIdentifier: 'RESPONSE_1', answer: 'C', kind: 'exact' },
+      { responseIdentifier: 'RESPONSE_2', answer: 'A', kind: 'exact' },
+      { responseIdentifier: 'RESPONSE_3', answer: 'D', kind: 'exact' },
+    ]);
+  });
+
   it('parses package from assessment and item map', () => {
     const assessmentXml = `
       <assessmentTest identifier="A-2">

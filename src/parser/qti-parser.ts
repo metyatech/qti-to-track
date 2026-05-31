@@ -426,7 +426,7 @@ function renderOrderedMarkdownBlock(
     case 'p':
       return renderOrderedMarkdownInline(element.children, context);
     case 'pre':
-      return renderCodeFence(rawOrderedText(element.children));
+      return renderCodeFence(renderOrderedPreText(element.children, context));
     case 'ul':
       return renderOrderedMarkdownList(element.children, context, false);
     default:
@@ -563,6 +563,34 @@ function rawOrderedText(nodes: readonly XmlRecord[]): string {
     if (element !== undefined) {
       chunks.push(rawOrderedText(element.children));
     }
+  }
+
+  return chunks.join('');
+}
+
+function renderOrderedPreText(
+  nodes: readonly XmlRecord[],
+  context: MarkdownRenderContext,
+): string {
+  const chunks: string[] = [];
+
+  for (const node of nodes) {
+    const text = getOrderedText(node);
+    if (text !== undefined) {
+      chunks.push(text);
+      continue;
+    }
+
+    const element = getOrderedElement(node);
+    if (element === undefined) {
+      continue;
+    }
+
+    chunks.push(
+      element.name === 'textEntryInteraction'
+        ? renderTextEntryPlaceholder(element, context)
+        : renderOrderedPreText(element.children, context),
+    );
   }
 
   return chunks.join('');
