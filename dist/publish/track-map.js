@@ -78,13 +78,14 @@ export function updateTrackMapForPublish(options) {
         options.materialPayload) {
         next.materials = { ...(next.materials ?? {}) };
         const materialKey = `${options.baseKey}/${options.materialDraft.title}`;
+        const previousReleaseId = options.trackMap.materials?.[materialKey]?.release_id;
         next.materials[materialKey] = {
             track_material_id: options.result.trackMaterialId,
             title: options.materialDraft.title,
             question_keys: options.questionKeys.map((questionKey) => `${options.baseKey}/${questionKey}`),
             source_hash: hashTrackPayload(options.materialPayload),
             updated_at: updatedAt,
-            release_id: options.result.trackReleaseId,
+            release_id: options.result.trackReleaseId ?? previousReleaseId,
         };
     }
     if (Object.keys(next.questions ?? {}).length === 0) {

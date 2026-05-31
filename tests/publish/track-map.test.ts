@@ -109,6 +109,68 @@ describe('track-map', () => {
     });
   });
 
+  it('preserves an existing release ID when updating a material without a new release', () => {
+    const updated = updateTrackMapForPublish({
+      trackMap: {
+        version: 1,
+        materials: {
+          'qti/Material': {
+            track_material_id: 201,
+            title: 'Material',
+            question_keys: ['qti/q1'],
+            source_hash: 'sha256:old',
+            updated_at: '2026-05-29T00:00:00.000Z',
+            release_id: 'rel-existing',
+          },
+        },
+      },
+      target: { base_url: 'https://tracks.dev', appspace: 'app' },
+      baseKey: 'qti',
+      questionKeys: ['q1'],
+      questionPayloads: [
+        {
+          title: 'Q1',
+          questionKind: 1,
+          status: 2,
+          content: 'Pick',
+          howToSolve: '',
+          quizCategories: [99],
+          availableApps: ['training'],
+        },
+      ],
+      materialDraft: {
+        title: 'Material',
+        style: 1,
+        status: 2,
+        language: 'ja',
+        basicTimeMinutes: 1,
+        difficulty: 1,
+        questionKeys: ['q1'],
+        materialTypes: ['others'],
+        availableApps: ['training'],
+      },
+      materialPayload: {
+        title: 'Material',
+        style: 1,
+        status: 2,
+        language: 'ja',
+        basicTimeMinutes: 1,
+        difficulty: 1,
+        questionIds: [101],
+        materialTypes: ['others'],
+        availableApps: ['training'],
+      },
+      result: {
+        trackQuestionIds: [101],
+        trackMaterialId: 201,
+        materialAction: 'updated',
+      },
+      updatedAt: '2026-05-30T00:00:00.000Z',
+    });
+
+    expect(updated.materials?.['qti/Material']?.release_id).toBe('rel-existing');
+  });
+
   it('omits material entry when material is skipped', () => {
     const updated = updateTrackMapForPublish({
       trackMap: { version: 1 },
