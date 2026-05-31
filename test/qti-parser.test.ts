@@ -79,6 +79,91 @@ describe('qti-parser', () => {
     expect(parsed.feedback).toEqual(['Correct: Paris']);
   });
 
+  it('preserves QTI rich content as Markdown for Track payload fields', () => {
+    const itemXml = `
+      <qti-assessment-item identifier="ITEM-RICH" title="DOM Error">
+        <qti-response-declaration identifier="RESPONSE" cardinality="single" base-type="identifier">
+          <qti-correct-response>
+            <qti-value>CHOICE_2</qti-value>
+          </qti-correct-response>
+        </qti-response-declaration>
+        <qti-item-body>
+          <qti-p>次のHTMLとJavaScriptを実行したところ、コンソールにエラーが表示されました。</qti-p>
+          <qti-p>HTML:</qti-p>
+          <qti-pre><qti-code>&lt;p id=&quot;result&quot;&gt;変更前&lt;/p&gt;
+</qti-code></qti-pre>
+          <qti-p>JavaScript:</qti-p>
+          <qti-pre><qti-code>const result = document.querySelector(&quot;#output&quot;);
+result.textContent = &quot;変更後&quot;;
+</qti-code></qti-pre>
+          <qti-p>表示されたエラー:</qti-p>
+          <qti-pre><qti-code>Uncaught TypeError: Cannot set properties of null (setting &apos;textContent&apos;)
+</qti-code></qti-pre>
+          <qti-p><qti-strong>💡 本試験では</qti-strong>: HTMLのid名、JavaScriptで指定するセレクタ名、変数名が変わります。</qti-p>
+          <qti-choice-interaction response-identifier="RESPONSE" max-choices="1">
+            <qti-simple-choice identifier="CHOICE_1"><qti-code>textContent</qti-code> はJavaScriptでは使えないため</qti-simple-choice>
+            <qti-simple-choice identifier="CHOICE_2"><qti-code>#output</qti-code> に一致するHTML要素が見つからず、<qti-code>result</qti-code> が <qti-code>null</qti-code> になっているため</qti-simple-choice>
+          </qti-choice-interaction>
+        </qti-item-body>
+        <qti-modal-feedback identifier="EXPLANATION" outcome-identifier="FEEDBACK" show-hide="show">
+          <qti-content-body>
+            <qti-p>解答:</qti-p>
+            <qti-pre><qti-code>#output に一致するHTML要素が見つからず、result が null になっているため
+</qti-code></qti-pre>
+            <qti-p><qti-code>document.querySelector(&quot;#output&quot;)</qti-code> は、<qti-code>id=&quot;output&quot;</qti-code> の要素を探します。</qti-p>
+          </qti-content-body>
+        </qti-modal-feedback>
+      </qti-assessment-item>
+    `;
+
+    const parsed = parseAssessmentItemXml(itemXml);
+
+    expect(parsed.prompt).toBe(
+      [
+        '次のHTMLとJavaScriptを実行したところ、コンソールにエラーが表示されました。',
+        '',
+        'HTML:',
+        '',
+        '```',
+        '<p id="result">変更前</p>',
+        '```',
+        '',
+        'JavaScript:',
+        '',
+        '```',
+        'const result = document.querySelector("#output");',
+        'result.textContent = "変更後";',
+        '```',
+        '',
+        '表示されたエラー:',
+        '',
+        '```',
+        "Uncaught TypeError: Cannot set properties of null (setting 'textContent')",
+        '```',
+        '',
+        '**💡 本試験では**: HTMLのid名、JavaScriptで指定するセレクタ名、変数名が変わります。',
+      ].join('\n'),
+    );
+    expect(parsed.choices).toEqual([
+      { identifier: 'CHOICE_1', text: '`textContent` はJavaScriptでは使えないため' },
+      {
+        identifier: 'CHOICE_2',
+        text: '`#output` に一致するHTML要素が見つからず、`result` が `null` になっているため',
+      },
+    ]);
+    expect(parsed.feedback).toEqual([
+      [
+        '解答:',
+        '',
+        '```',
+        '#output に一致するHTML要素が見つからず、result が null になっているため',
+        '```',
+        '',
+        '`document.querySelector("#output")` は、`id="output"` の要素を探します。',
+      ].join('\n'),
+    ]);
+  });
+
   it('parses text-entry and extended-text interaction types', () => {
     const textEntryXml = `
       <assessmentItem identifier="ITEM-TE" title="Fill Blank">

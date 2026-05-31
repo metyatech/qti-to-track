@@ -17,6 +17,17 @@ interface ParsedResponseDeclaration {
   kind: 'exact' | 'regex';
 }
 
+interface OrderedElement {
+  name: string;
+  children: XmlRecord[];
+  attrs: XmlRecord;
+}
+
+interface MarkdownRenderContext {
+  responsesByDeclaration: Record<string, ParsedResponseDeclaration>;
+  responseIdentifiers: string[];
+}
+
 const preserveOrderXmlParser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
@@ -37,6 +48,26 @@ const INTERACTION_KEYS = [
   'textEntryInteraction',
   'extendedTextInteraction',
 ] as const;
+
+const ORDERED_ATTRS_KEY = ':@';
+const ORDERED_TEXT_KEY = '#text';
+const BLOCK_ELEMENT_NAMES = new Set([
+  'blockquote',
+  'contentBody',
+  'div',
+  'li',
+  'ol',
+  'p',
+  'pre',
+  'rubricBlock',
+  'table',
+  'tbody',
+  'td',
+  'th',
+  'thead',
+  'tr',
+  'ul',
+]);
 
 function asRecord(value: unknown, errorMessage: string): XmlRecord {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -70,6 +101,103 @@ function asRecords(value: unknown): XmlRecord[] {
   return asArray(value).filter(
     (node): node is XmlRecord => !!node && typeof node === 'object' && !Array.isArray(node),
   );
+}
+
+function getOrderedElement(node: unknown): OrderedElement | undefined {
+  if (!node || typeof node !== 'object' || Array.isArray(node)) {
+    return undefined;
+  }
+
+  const record = node as XmlRecord;
+  const name = Object.keys(record).find(
+    (key) => key !== ORDERED_ATTRS_KEY && key !== ORDERED_TEXT_KEY,
+  );
+  if (name === undefined) {
+    return undefined;
+  }
+
+  const children = asRecords(record[name]);
+  const attrs =
+    record[ORDERED_ATTRS_KEY] && typeof record[ORDERED_ATTRS_KEY] === 'object' && !Array.isArray(record[ORDERED_ATTRS_KEY])
+      ? (record[ORDERED_ATTRS_KEY] as XmlRecord)
+      : {};
+
+  return { name, children, attrs };
+}
+
+function getOrderedText(node: unknown): string | undefined {
+  if (!node || typeof node !== 'object' || Array.isArray(node)) {
+    return undefined;
+  }
+
+  const value = (node as XmlRecord)[ORDERED_TEXT_KEY];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function parseOrderedAssessmentItemXml(xml: string): OrderedElement | undefined {
+  const parsed = preserveOrderXmlParser.parse(xml);
+  if (!Array.isArray(parsed)) {
+    return undefined;
+  }
+
+  for (const node of parsed) {
+    const element = getOrderedElement(node);
+    if (element?.name === 'assessmentItem') {
+      return element;
+    }
+  }
+
+  return undefined;
+}
+
+function findOrderedChildElement(
+  nodes: readonly XmlRecord[],
+  name: string,
+): OrderedElement | undefined {
+  for (const node of nodes) {
+    const element = getOrderedElement(node);
+    if (element?.name === name) {
+      return element;
+    }
+  }
+
+  return undefined;
+}
+
+function findOrderedChildElements(
+  nodes: readonly XmlRecord[],
+  name: string,
+): OrderedElement[] {
+  return nodes
+    .map((node) => getOrderedElement(node))
+    .filter((element): element is OrderedElement => element?.name === name);
+}
+
+function findOrderedDescendantElements(
+  nodes: readonly XmlRecord[],
+  name: string,
+): OrderedElement[] {
+  const matches: OrderedElement[] = [];
+
+  for (const node of nodes) {
+    const element = getOrderedElement(node);
+    if (element === undefined) {
+      continue;
+    }
+
+    if (element.name === name) {
+      matches.push(element);
+    }
+
+    matches.push(...findOrderedDescendantElements(element.children, name));
+  }
+
+  return matches;
+}
+
+function getOrderedItemBody(xml: string): OrderedElement | undefined {
+  const item = parseOrderedAssessmentItemXml(xml);
+  return item === undefined ? undefined : findOrderedChildElement(item.children, 'itemBody');
 }
 
 function collectAssessmentItemRefs(node: unknown): XmlRecord[] {
@@ -241,119 +369,305 @@ function formatBlankPlaceholder(blank: ParsedBlank | undefined): string {
   return blank.kind === 'regex' ? `\${/${blank.answer}/}` : `\${${blank.answer}}`;
 }
 
-function extractTextEntryPromptFromXml(
+function createMarkdownRenderContext(
+  responsesByDeclaration: Record<string, ParsedResponseDeclaration>,
+): MarkdownRenderContext {
+  return {
+    responsesByDeclaration,
+    responseIdentifiers: [],
+  };
+}
+
+function renderOrderedMarkdownBlocks(
+  nodes: readonly XmlRecord[],
+  context: MarkdownRenderContext,
+): string {
+  const blocks: string[] = [];
+
+  for (const node of nodes) {
+    const rendered = renderOrderedMarkdownBlock(node, context);
+    if (rendered.length > 0) {
+      blocks.push(rendered);
+    }
+  }
+
+  return blocks.join('\n\n').trim();
+}
+
+function renderOrderedMarkdownBlock(
+  node: XmlRecord,
+  context: MarkdownRenderContext,
+): string {
+  const text = getOrderedText(node);
+  if (text !== undefined) {
+    return text.trim().length > 0 ? normalizeInlineMarkdown(text) : '';
+  }
+
+  const element = getOrderedElement(node);
+  if (element === undefined) {
+    return '';
+  }
+
+  switch (element.name) {
+    case 'blockquote': {
+      const content = renderOrderedMarkdownBlocks(element.children, context);
+      return content
+        .split('\n')
+        .map((line) => `> ${line}`)
+        .join('\n')
+        .trim();
+    }
+    case 'contentBody':
+    case 'div':
+    case 'rubricBlock':
+      return renderOrderedMarkdownBlocks(element.children, context);
+    case 'ol':
+      return renderOrderedMarkdownList(element.children, context, true);
+    case 'p':
+      return renderOrderedMarkdownInline(element.children, context);
+    case 'pre':
+      return renderCodeFence(rawOrderedText(element.children));
+    case 'ul':
+      return renderOrderedMarkdownList(element.children, context, false);
+    default:
+      if (hasBlockElement(element.children)) {
+        return renderOrderedMarkdownBlocks(element.children, context);
+      }
+      return renderOrderedMarkdownInline(element.children, context);
+  }
+}
+
+function renderOrderedMarkdownList(
+  nodes: readonly XmlRecord[],
+  context: MarkdownRenderContext,
+  ordered: boolean,
+): string {
+  const items = nodes
+    .map((node) => getOrderedElement(node))
+    .filter((element): element is OrderedElement => element?.name === 'li');
+
+  return items
+    .map((item, index) => {
+      const prefix = ordered ? `${index + 1}. ` : '- ';
+      const content = renderOrderedMarkdownBlocks(item.children, context) || renderOrderedMarkdownInline(item.children, context);
+      const lines = content.split('\n');
+      const [firstLine = '', ...restLines] = lines;
+      return [
+        `${prefix}${firstLine}`,
+        ...restLines.map((line) => `${' '.repeat(prefix.length)}${line}`),
+      ].join('\n');
+    })
+    .join('\n');
+}
+
+function renderOrderedMarkdownInline(
+  nodes: readonly XmlRecord[],
+  context: MarkdownRenderContext,
+): string {
+  return normalizeInlineMarkdown(
+    nodes.map((node) => renderOrderedMarkdownInlineNode(node, context)).join(''),
+  );
+}
+
+function renderOrderedMarkdownInlineNode(
+  node: XmlRecord,
+  context: MarkdownRenderContext,
+): string {
+  const text = getOrderedText(node);
+  if (text !== undefined) {
+    return text;
+  }
+
+  const element = getOrderedElement(node);
+  if (element === undefined) {
+    return '';
+  }
+
+  switch (element.name) {
+    case 'br':
+      return '\n';
+    case 'code':
+      return formatInlineCode(rawOrderedText(element.children));
+    case 'em':
+    case 'i':
+      return `*${renderOrderedMarkdownInline(element.children, context)}*`;
+    case 'img': {
+      const src = readStringAttribute(element.attrs, '@_src') ?? '';
+      const alt = readStringAttribute(element.attrs, '@_alt') ?? '';
+      return src.length > 0 ? `![${alt}](${src})` : '';
+    }
+    case 'strong':
+    case 'b':
+      return `**${renderOrderedMarkdownInline(element.children, context)}**`;
+    case 'textEntryInteraction':
+      return renderTextEntryPlaceholder(element, context);
+    default:
+      return renderOrderedMarkdownInline(element.children, context);
+  }
+}
+
+function renderTextEntryPlaceholder(
+  element: OrderedElement,
+  context: MarkdownRenderContext,
+): string {
+  const responseIdentifier = readResponseIdentifierAttribute(element.attrs);
+  const responseDeclaration =
+    responseIdentifier === undefined
+      ? undefined
+      : context.responsesByDeclaration[responseIdentifier];
+
+  if (responseIdentifier !== undefined) {
+    context.responseIdentifiers.push(responseIdentifier);
+  }
+
+  return formatBlankPlaceholder(
+    responseIdentifier === undefined
+      ? undefined
+      : {
+          responseIdentifier,
+          answer: responseDeclaration?.values[0] ?? '',
+          kind: responseDeclaration?.kind ?? 'exact',
+        },
+  );
+}
+
+function renderCodeFence(rawCode: string): string {
+  const code = rawCode.replace(/^\n+/u, '').replace(/\n+$/u, '');
+  return `\`\`\`\n${code}\n\`\`\``;
+}
+
+function formatInlineCode(rawCode: string): string {
+  const code = normalizeInlineMarkdown(rawCode);
+  if (!code.includes('`')) {
+    return `\`${code}\``;
+  }
+
+  const longestRun = Math.max(
+    ...Array.from(code.matchAll(/`+/gu), (match) => match[0].length),
+  );
+  const fence = '`'.repeat(longestRun + 1);
+  return `${fence} ${code} ${fence}`;
+}
+
+function rawOrderedText(nodes: readonly XmlRecord[]): string {
+  const chunks: string[] = [];
+
+  for (const node of nodes) {
+    const text = getOrderedText(node);
+    if (text !== undefined) {
+      chunks.push(text);
+      continue;
+    }
+
+    const element = getOrderedElement(node);
+    if (element !== undefined) {
+      chunks.push(rawOrderedText(element.children));
+    }
+  }
+
+  return chunks.join('');
+}
+
+function hasBlockElement(nodes: readonly XmlRecord[]): boolean {
+  return nodes.some((node) => {
+    const element = getOrderedElement(node);
+    return element !== undefined && BLOCK_ELEMENT_NAMES.has(element.name);
+  });
+}
+
+function normalizeInlineMarkdown(value: string): string {
+  return value.replace(/\s+/gu, ' ').trim();
+}
+
+function extractPromptFromXml(
   xml: string,
   responsesByDeclaration: Record<string, ParsedResponseDeclaration>,
-): { prompt: string; responseIdentifiers: string[] } {
-  const preserveParsed = preserveOrderXmlParser.parse(xml);
-  if (!Array.isArray(preserveParsed) || preserveParsed.length === 0) {
-    return { prompt: '', responseIdentifiers: [] };
+): { prompt: string; responseIdentifiers: string[] } | undefined {
+  const itemBody = getOrderedItemBody(xml);
+  if (itemBody === undefined) {
+    return undefined;
   }
 
-  const rootNode = preserveParsed[0] as XmlRecord;
-  const assessmentItemNodes = rootNode.assessmentItem;
-  if (!Array.isArray(assessmentItemNodes)) {
-    return { prompt: '', responseIdentifiers: [] };
-  }
+  const context = createMarkdownRenderContext(responsesByDeclaration);
+  const promptNodes: XmlRecord[] = [];
 
-  const itemBodyEntry = assessmentItemNodes.find((entry) => {
-    if (!entry || typeof entry !== 'object') {
-      return false;
-    }
-    return 'itemBody' in (entry as XmlRecord);
-  }) as XmlRecord | undefined;
-
-  if (!itemBodyEntry) {
-    return { prompt: '', responseIdentifiers: [] };
-  }
-
-  const itemBodyNodes = itemBodyEntry.itemBody;
-  if (!Array.isArray(itemBodyNodes)) {
-    return { prompt: '', responseIdentifiers: [] };
-  }
-
-  const lines: string[] = [];
-  const responseIdentifiers: string[] = [];
-
-  for (const node of itemBodyNodes) {
-    if (!node || typeof node !== 'object') {
-      continue;
+  for (const node of itemBody.children) {
+    const element = getOrderedElement(node);
+    if (
+      element !== undefined &&
+      (element.name === 'choiceInteraction' ||
+        element.name === 'extendedTextInteraction' ||
+        element.name === 'rubricBlock')
+    ) {
+      break;
     }
 
-    const record = node as XmlRecord;
-    if ('choiceInteraction' in record || 'extendedTextInteraction' in record || 'rubricBlock' in record) {
-      continue;
-    }
-
-    for (const [tagName, tagValue] of Object.entries(record)) {
-      if (tagName === ':@' || !Array.isArray(tagValue)) {
-        continue;
-      }
-
-      const chunks: string[] = [];
-
-      for (const child of tagValue) {
-        if (!child || typeof child !== 'object') {
-          continue;
-        }
-
-        const childRecord = child as XmlRecord;
-        const textValue = childRecord['#text'];
-        if (typeof textValue === 'string' && textValue.length > 0) {
-          chunks.push(textValue);
-        }
-
-        if ('textEntryInteraction' in childRecord) {
-          const attrs = childRecord[':@'];
-          const responseIdentifier =
-            attrs && typeof attrs === 'object' && !Array.isArray(attrs)
-              ? readResponseIdentifierAttribute(attrs as XmlRecord)
-              : undefined;
-
-          const responseDeclaration = responseIdentifier ? responsesByDeclaration[responseIdentifier] : undefined;
-          if (responseIdentifier) {
-            responseIdentifiers.push(responseIdentifier);
-          }
-
-          const placeholder = formatBlankPlaceholder(
-            responseIdentifier
-              ? {
-                  responseIdentifier,
-                  answer: responseDeclaration?.values[0] ?? '',
-                  kind: responseDeclaration?.kind ?? 'exact',
-                }
-              : undefined,
-          );
-          chunks.push(placeholder);
-        } else if ('img' in childRecord || 'qti-img' in childRecord) {
-          const attrs = childRecord[':@'];
-          if (attrs && typeof attrs === 'object' && !Array.isArray(attrs)) {
-            const src = readStringAttribute(attrs as XmlRecord, '@_src') ?? '';
-            const alt = readStringAttribute(attrs as XmlRecord, '@_alt') ?? '';
-            if (src) {
-              chunks.push(`![${alt}](${src})`);
-            }
-          }
-        } else {
-          const inlineText = getTextContent(
-            Object.fromEntries(
-              Object.entries(childRecord).filter(([key]) => key !== ':@' && key !== '#text' && key !== 'textEntryInteraction'),
-            ),
-          );
-          if (inlineText) {
-            chunks.push(inlineText);
-          }
-        }
-      }
-
-      const line = chunks.join('').replace(/\s+/g, ' ').trim();
-      if (line) {
-        lines.push(line);
-      }
-    }
+    promptNodes.push(node);
   }
 
-  return { prompt: lines.join('\n').trim(), responseIdentifiers };
+  return {
+    prompt: renderOrderedMarkdownBlocks(promptNodes, context),
+    responseIdentifiers: context.responseIdentifiers,
+  };
+}
+
+function extractChoicesFromXml(
+  xml: string,
+  interactionType: TrackQuestionType,
+): ParsedQtiChoice[] | undefined {
+  if (interactionType !== 'choice') {
+    return undefined;
+  }
+
+  const itemBody = getOrderedItemBody(xml);
+  const interaction =
+    itemBody === undefined
+      ? undefined
+      : findOrderedChildElement(itemBody.children, 'choiceInteraction');
+  if (interaction === undefined) {
+    return undefined;
+  }
+
+  const context = createMarkdownRenderContext({});
+  const choices = interaction.children
+    .map((node) => getOrderedElement(node))
+    .filter((element): element is OrderedElement => element?.name === 'simpleChoice')
+    .map((choice): ParsedQtiChoice => ({
+      identifier: readStringAttribute(choice.attrs, '@_identifier') ?? '',
+      text: renderOrderedMarkdownInline(choice.children, context),
+    }))
+    .filter((choice) => choice.identifier.length > 0);
+
+  return choices.length > 0 ? choices : undefined;
+}
+
+function extractRubricFromXml(xml: string): string[] | undefined {
+  const item = parseOrderedAssessmentItemXml(xml);
+  if (item === undefined) {
+    return undefined;
+  }
+
+  const context = createMarkdownRenderContext({});
+  const rubric = findOrderedDescendantElements(item.children, 'rubricBlock')
+    .map((element) => renderOrderedMarkdownBlocks(element.children, context))
+    .filter((value) => value.length > 0);
+
+  return rubric.length > 0 ? rubric : undefined;
+}
+
+function extractFeedbackFromXml(xml: string): string[] | undefined {
+  const item = parseOrderedAssessmentItemXml(xml);
+  if (item === undefined) {
+    return undefined;
+  }
+
+  const context = createMarkdownRenderContext({});
+  const feedback = findOrderedChildElements(item.children, 'modalFeedback')
+    .map((element) => findOrderedChildElement(element.children, 'contentBody') ?? element)
+    .map((element) => renderOrderedMarkdownBlocks(element.children, context))
+    .filter((value) => value.length > 0);
+
+  return feedback.length > 0 ? feedback : undefined;
 }
 
 function parseTimeLimitsNodeSeconds(timeLimitsNode: XmlRecord): number | undefined {
@@ -502,15 +816,12 @@ export function parseAssessmentItemXml(xml: string): ParsedQtiItem {
   const { key: interactionKey, interaction } = findInteraction(itemBody);
   const interactionType = inferInteractionType(interactionKey);
   const responsesByDeclaration = extractCorrectResponsesByDeclaration(itemNode);
-  const textEntryPrompt =
-    interactionType === 'text-entry'
-      ? extractTextEntryPromptFromXml(xml, responsesByDeclaration)
-      : undefined;
+  const richPrompt = extractPromptFromXml(xml, responsesByDeclaration);
   const blanks =
     interactionType === 'text-entry'
       ? (
-          textEntryPrompt && textEntryPrompt.responseIdentifiers.length > 0
-            ? textEntryPrompt.responseIdentifiers
+          richPrompt && richPrompt.responseIdentifiers.length > 0
+            ? richPrompt.responseIdentifiers
             : Object.keys(responsesByDeclaration)
         )
           .map((responseIdentifier): ParsedBlank | undefined => {
@@ -528,18 +839,21 @@ export function parseAssessmentItemXml(xml: string): ParsedQtiItem {
           })
           .filter((blank): blank is ParsedBlank => blank !== undefined)
       : [];
+  const choices = extractChoicesFromXml(xml, interactionType);
+  const rubric = extractRubricFromXml(xml);
+  const feedback = extractFeedbackFromXml(xml);
 
   return {
     identifier,
     title,
     interactionType,
-    prompt: textEntryPrompt && textEntryPrompt.prompt.length > 0 ? textEntryPrompt.prompt : extractPrompt(itemBody),
+    prompt: richPrompt && richPrompt.prompt.length > 0 ? richPrompt.prompt : extractPrompt(itemBody),
     timeLimitSeconds: parseTimeLimitSeconds(itemNode),
-    choices: extractChoices(interaction, interactionType),
+    choices: choices ?? extractChoices(interaction, interactionType),
     correctResponses: extractCorrectResponses(itemNode),
     blanks,
-    rubric: extractRubric(itemNode),
-    feedback: extractFeedback(itemNode),
+    rubric: rubric ?? extractRubric(itemNode),
+    feedback: feedback ?? extractFeedback(itemNode),
   };
 }
 

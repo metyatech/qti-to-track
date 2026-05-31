@@ -19,6 +19,25 @@ const INTERACTION_KEYS = [
     'textEntryInteraction',
     'extendedTextInteraction',
 ];
+const ORDERED_ATTRS_KEY = ':@';
+const ORDERED_TEXT_KEY = '#text';
+const BLOCK_ELEMENT_NAMES = new Set([
+    'blockquote',
+    'contentBody',
+    'div',
+    'li',
+    'ol',
+    'p',
+    'pre',
+    'rubricBlock',
+    'table',
+    'tbody',
+    'td',
+    'th',
+    'thead',
+    'tr',
+    'ul',
+]);
 function asRecord(value, errorMessage) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         throw new Error(errorMessage);
@@ -43,6 +62,73 @@ function readResponseIdentifierAttribute(node) {
 }
 function asRecords(value) {
     return asArray(value).filter((node) => !!node && typeof node === 'object' && !Array.isArray(node));
+}
+function getOrderedElement(node) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) {
+        return undefined;
+    }
+    const record = node;
+    const name = Object.keys(record).find((key) => key !== ORDERED_ATTRS_KEY && key !== ORDERED_TEXT_KEY);
+    if (name === undefined) {
+        return undefined;
+    }
+    const children = asRecords(record[name]);
+    const attrs = record[ORDERED_ATTRS_KEY] && typeof record[ORDERED_ATTRS_KEY] === 'object' && !Array.isArray(record[ORDERED_ATTRS_KEY])
+        ? record[ORDERED_ATTRS_KEY]
+        : {};
+    return { name, children, attrs };
+}
+function getOrderedText(node) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) {
+        return undefined;
+    }
+    const value = node[ORDERED_TEXT_KEY];
+    return typeof value === 'string' ? value : undefined;
+}
+function parseOrderedAssessmentItemXml(xml) {
+    const parsed = preserveOrderXmlParser.parse(xml);
+    if (!Array.isArray(parsed)) {
+        return undefined;
+    }
+    for (const node of parsed) {
+        const element = getOrderedElement(node);
+        if (element?.name === 'assessmentItem') {
+            return element;
+        }
+    }
+    return undefined;
+}
+function findOrderedChildElement(nodes, name) {
+    for (const node of nodes) {
+        const element = getOrderedElement(node);
+        if (element?.name === name) {
+            return element;
+        }
+    }
+    return undefined;
+}
+function findOrderedChildElements(nodes, name) {
+    return nodes
+        .map((node) => getOrderedElement(node))
+        .filter((element) => element?.name === name);
+}
+function findOrderedDescendantElements(nodes, name) {
+    const matches = [];
+    for (const node of nodes) {
+        const element = getOrderedElement(node);
+        if (element === undefined) {
+            continue;
+        }
+        if (element.name === name) {
+            matches.push(element);
+        }
+        matches.push(...findOrderedDescendantElements(element.children, name));
+    }
+    return matches;
+}
+function getOrderedItemBody(xml) {
+    const item = parseOrderedAssessmentItemXml(xml);
+    return item === undefined ? undefined : findOrderedChildElement(item.children, 'itemBody');
 }
 function collectAssessmentItemRefs(node) {
     if (!node || typeof node !== 'object') {
@@ -170,95 +256,229 @@ function formatBlankPlaceholder(blank) {
     }
     return blank.kind === 'regex' ? `\${/${blank.answer}/}` : `\${${blank.answer}}`;
 }
-function extractTextEntryPromptFromXml(xml, responsesByDeclaration) {
-    const preserveParsed = preserveOrderXmlParser.parse(xml);
-    if (!Array.isArray(preserveParsed) || preserveParsed.length === 0) {
-        return { prompt: '', responseIdentifiers: [] };
-    }
-    const rootNode = preserveParsed[0];
-    const assessmentItemNodes = rootNode.assessmentItem;
-    if (!Array.isArray(assessmentItemNodes)) {
-        return { prompt: '', responseIdentifiers: [] };
-    }
-    const itemBodyEntry = assessmentItemNodes.find((entry) => {
-        if (!entry || typeof entry !== 'object') {
-            return false;
+function createMarkdownRenderContext(responsesByDeclaration) {
+    return {
+        responsesByDeclaration,
+        responseIdentifiers: [],
+    };
+}
+function renderOrderedMarkdownBlocks(nodes, context) {
+    const blocks = [];
+    for (const node of nodes) {
+        const rendered = renderOrderedMarkdownBlock(node, context);
+        if (rendered.length > 0) {
+            blocks.push(rendered);
         }
-        return 'itemBody' in entry;
+    }
+    return blocks.join('\n\n').trim();
+}
+function renderOrderedMarkdownBlock(node, context) {
+    const text = getOrderedText(node);
+    if (text !== undefined) {
+        return text.trim().length > 0 ? normalizeInlineMarkdown(text) : '';
+    }
+    const element = getOrderedElement(node);
+    if (element === undefined) {
+        return '';
+    }
+    switch (element.name) {
+        case 'blockquote': {
+            const content = renderOrderedMarkdownBlocks(element.children, context);
+            return content
+                .split('\n')
+                .map((line) => `> ${line}`)
+                .join('\n')
+                .trim();
+        }
+        case 'contentBody':
+        case 'div':
+        case 'rubricBlock':
+            return renderOrderedMarkdownBlocks(element.children, context);
+        case 'ol':
+            return renderOrderedMarkdownList(element.children, context, true);
+        case 'p':
+            return renderOrderedMarkdownInline(element.children, context);
+        case 'pre':
+            return renderCodeFence(rawOrderedText(element.children));
+        case 'ul':
+            return renderOrderedMarkdownList(element.children, context, false);
+        default:
+            if (hasBlockElement(element.children)) {
+                return renderOrderedMarkdownBlocks(element.children, context);
+            }
+            return renderOrderedMarkdownInline(element.children, context);
+    }
+}
+function renderOrderedMarkdownList(nodes, context, ordered) {
+    const items = nodes
+        .map((node) => getOrderedElement(node))
+        .filter((element) => element?.name === 'li');
+    return items
+        .map((item, index) => {
+        const prefix = ordered ? `${index + 1}. ` : '- ';
+        const content = renderOrderedMarkdownBlocks(item.children, context) || renderOrderedMarkdownInline(item.children, context);
+        const lines = content.split('\n');
+        const [firstLine = '', ...restLines] = lines;
+        return [
+            `${prefix}${firstLine}`,
+            ...restLines.map((line) => `${' '.repeat(prefix.length)}${line}`),
+        ].join('\n');
+    })
+        .join('\n');
+}
+function renderOrderedMarkdownInline(nodes, context) {
+    return normalizeInlineMarkdown(nodes.map((node) => renderOrderedMarkdownInlineNode(node, context)).join(''));
+}
+function renderOrderedMarkdownInlineNode(node, context) {
+    const text = getOrderedText(node);
+    if (text !== undefined) {
+        return text;
+    }
+    const element = getOrderedElement(node);
+    if (element === undefined) {
+        return '';
+    }
+    switch (element.name) {
+        case 'br':
+            return '\n';
+        case 'code':
+            return formatInlineCode(rawOrderedText(element.children));
+        case 'em':
+        case 'i':
+            return `*${renderOrderedMarkdownInline(element.children, context)}*`;
+        case 'img': {
+            const src = readStringAttribute(element.attrs, '@_src') ?? '';
+            const alt = readStringAttribute(element.attrs, '@_alt') ?? '';
+            return src.length > 0 ? `![${alt}](${src})` : '';
+        }
+        case 'strong':
+        case 'b':
+            return `**${renderOrderedMarkdownInline(element.children, context)}**`;
+        case 'textEntryInteraction':
+            return renderTextEntryPlaceholder(element, context);
+        default:
+            return renderOrderedMarkdownInline(element.children, context);
+    }
+}
+function renderTextEntryPlaceholder(element, context) {
+    const responseIdentifier = readResponseIdentifierAttribute(element.attrs);
+    const responseDeclaration = responseIdentifier === undefined
+        ? undefined
+        : context.responsesByDeclaration[responseIdentifier];
+    if (responseIdentifier !== undefined) {
+        context.responseIdentifiers.push(responseIdentifier);
+    }
+    return formatBlankPlaceholder(responseIdentifier === undefined
+        ? undefined
+        : {
+            responseIdentifier,
+            answer: responseDeclaration?.values[0] ?? '',
+            kind: responseDeclaration?.kind ?? 'exact',
+        });
+}
+function renderCodeFence(rawCode) {
+    const code = rawCode.replace(/^\n+/u, '').replace(/\n+$/u, '');
+    return `\`\`\`\n${code}\n\`\`\``;
+}
+function formatInlineCode(rawCode) {
+    const code = normalizeInlineMarkdown(rawCode);
+    if (!code.includes('`')) {
+        return `\`${code}\``;
+    }
+    const longestRun = Math.max(...Array.from(code.matchAll(/`+/gu), (match) => match[0].length));
+    const fence = '`'.repeat(longestRun + 1);
+    return `${fence} ${code} ${fence}`;
+}
+function rawOrderedText(nodes) {
+    const chunks = [];
+    for (const node of nodes) {
+        const text = getOrderedText(node);
+        if (text !== undefined) {
+            chunks.push(text);
+            continue;
+        }
+        const element = getOrderedElement(node);
+        if (element !== undefined) {
+            chunks.push(rawOrderedText(element.children));
+        }
+    }
+    return chunks.join('');
+}
+function hasBlockElement(nodes) {
+    return nodes.some((node) => {
+        const element = getOrderedElement(node);
+        return element !== undefined && BLOCK_ELEMENT_NAMES.has(element.name);
     });
-    if (!itemBodyEntry) {
-        return { prompt: '', responseIdentifiers: [] };
+}
+function normalizeInlineMarkdown(value) {
+    return value.replace(/\s+/gu, ' ').trim();
+}
+function extractPromptFromXml(xml, responsesByDeclaration) {
+    const itemBody = getOrderedItemBody(xml);
+    if (itemBody === undefined) {
+        return undefined;
     }
-    const itemBodyNodes = itemBodyEntry.itemBody;
-    if (!Array.isArray(itemBodyNodes)) {
-        return { prompt: '', responseIdentifiers: [] };
+    const context = createMarkdownRenderContext(responsesByDeclaration);
+    const promptNodes = [];
+    for (const node of itemBody.children) {
+        const element = getOrderedElement(node);
+        if (element !== undefined &&
+            (element.name === 'choiceInteraction' ||
+                element.name === 'extendedTextInteraction' ||
+                element.name === 'rubricBlock')) {
+            break;
+        }
+        promptNodes.push(node);
     }
-    const lines = [];
-    const responseIdentifiers = [];
-    for (const node of itemBodyNodes) {
-        if (!node || typeof node !== 'object') {
-            continue;
-        }
-        const record = node;
-        if ('choiceInteraction' in record || 'extendedTextInteraction' in record || 'rubricBlock' in record) {
-            continue;
-        }
-        for (const [tagName, tagValue] of Object.entries(record)) {
-            if (tagName === ':@' || !Array.isArray(tagValue)) {
-                continue;
-            }
-            const chunks = [];
-            for (const child of tagValue) {
-                if (!child || typeof child !== 'object') {
-                    continue;
-                }
-                const childRecord = child;
-                const textValue = childRecord['#text'];
-                if (typeof textValue === 'string' && textValue.length > 0) {
-                    chunks.push(textValue);
-                }
-                if ('textEntryInteraction' in childRecord) {
-                    const attrs = childRecord[':@'];
-                    const responseIdentifier = attrs && typeof attrs === 'object' && !Array.isArray(attrs)
-                        ? readResponseIdentifierAttribute(attrs)
-                        : undefined;
-                    const responseDeclaration = responseIdentifier ? responsesByDeclaration[responseIdentifier] : undefined;
-                    if (responseIdentifier) {
-                        responseIdentifiers.push(responseIdentifier);
-                    }
-                    const placeholder = formatBlankPlaceholder(responseIdentifier
-                        ? {
-                            responseIdentifier,
-                            answer: responseDeclaration?.values[0] ?? '',
-                            kind: responseDeclaration?.kind ?? 'exact',
-                        }
-                        : undefined);
-                    chunks.push(placeholder);
-                }
-                else if ('img' in childRecord || 'qti-img' in childRecord) {
-                    const attrs = childRecord[':@'];
-                    if (attrs && typeof attrs === 'object' && !Array.isArray(attrs)) {
-                        const src = readStringAttribute(attrs, '@_src') ?? '';
-                        const alt = readStringAttribute(attrs, '@_alt') ?? '';
-                        if (src) {
-                            chunks.push(`![${alt}](${src})`);
-                        }
-                    }
-                }
-                else {
-                    const inlineText = getTextContent(Object.fromEntries(Object.entries(childRecord).filter(([key]) => key !== ':@' && key !== '#text' && key !== 'textEntryInteraction')));
-                    if (inlineText) {
-                        chunks.push(inlineText);
-                    }
-                }
-            }
-            const line = chunks.join('').replace(/\s+/g, ' ').trim();
-            if (line) {
-                lines.push(line);
-            }
-        }
+    return {
+        prompt: renderOrderedMarkdownBlocks(promptNodes, context),
+        responseIdentifiers: context.responseIdentifiers,
+    };
+}
+function extractChoicesFromXml(xml, interactionType) {
+    if (interactionType !== 'choice') {
+        return undefined;
     }
-    return { prompt: lines.join('\n').trim(), responseIdentifiers };
+    const itemBody = getOrderedItemBody(xml);
+    const interaction = itemBody === undefined
+        ? undefined
+        : findOrderedChildElement(itemBody.children, 'choiceInteraction');
+    if (interaction === undefined) {
+        return undefined;
+    }
+    const context = createMarkdownRenderContext({});
+    const choices = interaction.children
+        .map((node) => getOrderedElement(node))
+        .filter((element) => element?.name === 'simpleChoice')
+        .map((choice) => ({
+        identifier: readStringAttribute(choice.attrs, '@_identifier') ?? '',
+        text: renderOrderedMarkdownInline(choice.children, context),
+    }))
+        .filter((choice) => choice.identifier.length > 0);
+    return choices.length > 0 ? choices : undefined;
+}
+function extractRubricFromXml(xml) {
+    const item = parseOrderedAssessmentItemXml(xml);
+    if (item === undefined) {
+        return undefined;
+    }
+    const context = createMarkdownRenderContext({});
+    const rubric = findOrderedDescendantElements(item.children, 'rubricBlock')
+        .map((element) => renderOrderedMarkdownBlocks(element.children, context))
+        .filter((value) => value.length > 0);
+    return rubric.length > 0 ? rubric : undefined;
+}
+function extractFeedbackFromXml(xml) {
+    const item = parseOrderedAssessmentItemXml(xml);
+    if (item === undefined) {
+        return undefined;
+    }
+    const context = createMarkdownRenderContext({});
+    const feedback = findOrderedChildElements(item.children, 'modalFeedback')
+        .map((element) => findOrderedChildElement(element.children, 'contentBody') ?? element)
+        .map((element) => renderOrderedMarkdownBlocks(element.children, context))
+        .filter((value) => value.length > 0);
+    return feedback.length > 0 ? feedback : undefined;
 }
 function parseTimeLimitsNodeSeconds(timeLimitsNode) {
     const rawValue = readStringAttribute(timeLimitsNode, '@_maxTime') ??
@@ -374,12 +594,10 @@ export function parseAssessmentItemXml(xml) {
     const { key: interactionKey, interaction } = findInteraction(itemBody);
     const interactionType = inferInteractionType(interactionKey);
     const responsesByDeclaration = extractCorrectResponsesByDeclaration(itemNode);
-    const textEntryPrompt = interactionType === 'text-entry'
-        ? extractTextEntryPromptFromXml(xml, responsesByDeclaration)
-        : undefined;
+    const richPrompt = extractPromptFromXml(xml, responsesByDeclaration);
     const blanks = interactionType === 'text-entry'
-        ? (textEntryPrompt && textEntryPrompt.responseIdentifiers.length > 0
-            ? textEntryPrompt.responseIdentifiers
+        ? (richPrompt && richPrompt.responseIdentifiers.length > 0
+            ? richPrompt.responseIdentifiers
             : Object.keys(responsesByDeclaration))
             .map((responseIdentifier) => {
             const declaration = responsesByDeclaration[responseIdentifier];
@@ -395,17 +613,20 @@ export function parseAssessmentItemXml(xml) {
         })
             .filter((blank) => blank !== undefined)
         : [];
+    const choices = extractChoicesFromXml(xml, interactionType);
+    const rubric = extractRubricFromXml(xml);
+    const feedback = extractFeedbackFromXml(xml);
     return {
         identifier,
         title,
         interactionType,
-        prompt: textEntryPrompt && textEntryPrompt.prompt.length > 0 ? textEntryPrompt.prompt : extractPrompt(itemBody),
+        prompt: richPrompt && richPrompt.prompt.length > 0 ? richPrompt.prompt : extractPrompt(itemBody),
         timeLimitSeconds: parseTimeLimitSeconds(itemNode),
-        choices: extractChoices(interaction, interactionType),
+        choices: choices ?? extractChoices(interaction, interactionType),
         correctResponses: extractCorrectResponses(itemNode),
         blanks,
-        rubric: extractRubric(itemNode),
-        feedback: extractFeedback(itemNode),
+        rubric: rubric ?? extractRubric(itemNode),
+        feedback: feedback ?? extractFeedback(itemNode),
     };
 }
 export function parseQtiPackageFromXml(options) {
