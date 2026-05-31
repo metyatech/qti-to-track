@@ -9,7 +9,7 @@ function toQuestionKind(item) {
     if (item.interactionType === 'text-entry') {
         return 2;
     }
-    return 4;
+    return 3;
 }
 function toTrackBlankPayload(blank) {
     return {

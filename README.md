@@ -158,7 +158,7 @@ Question kinds map as follows:
 |----------------------|----------------------|
 | `choiceInteraction` | `1` (single choice) |
 | `textEntryInteraction` | `2` (fill-in-the-blank) |
-| `extendedTextInteraction` | `4` (free text) |
+| `extendedTextInteraction` | `3` (free text) |
 
 ## Development
 

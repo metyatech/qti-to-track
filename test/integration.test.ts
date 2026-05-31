@@ -61,7 +61,7 @@ describe('integration: markdown-to-qti fixtures', () => {
     ]);
 
     const descriptiveQuestion = payload.questions.find((question) => question.title === 'Descriptive Item');
-    expect(descriptiveQuestion?.questionKind).toBe(4);
+    expect(descriptiveQuestion?.questionKind).toBe(3);
     expect(descriptiveQuestion?.choices).toBeUndefined();
     expect(descriptiveQuestion?.blanks).toBeUndefined();
   });

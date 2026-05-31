@@ -16,7 +16,7 @@ function isPositiveFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
-function toQuestionKind(item: ParsedQtiItem): 1 | 2 | 3 | 4 {
+function toQuestionKind(item: ParsedQtiItem): 1 | 2 | 3 {
   if (item.interactionType === 'choice') {
     return 1;
   }
@@ -25,7 +25,7 @@ function toQuestionKind(item: ParsedQtiItem): 1 | 2 | 3 | 4 {
     return 2;
   }
 
-  return 4;
+  return 3;
 }
 
 function toTrackBlankPayload(blank: ParsedQtiItem['blanks'][number]): TrackBlankPayload {
