@@ -80,7 +80,9 @@ The output directory is created automatically if it doesn't exist. The output is
 
 Publishes the parsed QTI package directly to Track LMS. Creates questions, bundles them into a material, and releases the material unless `--no-material` is used.
 
-Credentials can be provided by CLI options, environment variables, or a saved session file. Appspace resolution order is CLI `--appspace`, `TRACK_TCM_APPSPACE`, then `--session`. Credential resolution prefers CLI `--authorization` / `--cookie`, then `TRACK_TCM_AUTHORIZATION` / `TRACK_TCM_COOKIE`, then `--session`. The `--session` loader supports `weekly-quiz-workbench track-login` session files that store cookies in `cookieHeader`, as well as legacy `cookie` and nested credential fields.
+Credentials can be provided by CLI options, environment variables, a saved session file, or a Track map target. **After `weekly-quiz-workbench track-login`, `qti-to-track publish` can use the default saved session without a manual `--session` flag.** Appspace and base URL resolution order is CLI flags, `TRACK_TCM_*` environment variables, the saved session, then `--track-map` `target`. Credential resolution prefers CLI `--authorization` / `--cookie`, then `TRACK_TCM_AUTHORIZATION` / `TRACK_TCM_COOKIE`, then the saved session. The session loader supports `weekly-quiz-workbench track-login` session files that store cookies in `cookieHeader`, as well as legacy `cookie` and nested credential fields.
+
+When `--track-map` contains a `target`, qti-to-track fails before API use if CLI flags, environment variables, or the selected session point at a different appspace or base URL. This prevents accidentally publishing to a different Track appspace than the committed map records.
 
 ```sh
 export TRACK_TCM_COOKIE="your_cookie_here"
@@ -96,9 +98,9 @@ qti-to-track publish --qti-dir ./my-qti-package --yes --track-map ./track-map.ya
 | `--appspace <id>` | no | Track appspace ID. Required for real publish unless supplied by `TRACK_TCM_APPSPACE` or `--session` |
 | `--authorization <token>` | no | Track authorization header |
 | `--cookie <cookie>` | no | Track cookie header |
-| `--session <path>` | no | Saved Track session file from `weekly-quiz-workbench`; can supply base URL, appspace, `cookieHeader`/cookie, and authorization |
+| `--session <path>` | no | Saved Track session file from `weekly-quiz-workbench`; when omitted, the default Workbench session path is checked. Sessions can supply base URL, appspace, `cookieHeader`/cookie, and authorization |
 | `--yes` | no | Execute the publish. Without this, it performs a dry-run |
-| `--track-map <path>` | no | Path to a `track-map.yaml` file to read/update |
+| `--track-map <path>` | no | Path to a `track-map.yaml` file to read/update; its `target` supplies default base URL/appspace and guards against target mismatches |
 | `--no-track-map` | no | Disable all track-map read/write. Cannot be combined with `--track-map` |
 | `--material-title <title>` | no | Override QTI assessment title for the Track material |
 | `--material-type <type>` | no | Track material type (default: `others`) |

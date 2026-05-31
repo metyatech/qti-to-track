@@ -5,3 +5,4 @@ export interface TrackSession {
     authorization?: string;
 }
 export declare function loadSession(filePath: string | undefined): Promise<TrackSession>;
+export declare function getDefaultWorkbenchSessionPath(): string;

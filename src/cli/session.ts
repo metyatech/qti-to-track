@@ -1,5 +1,10 @@
 import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import yaml from 'yaml';
+
+const WORKBENCH_CONFIG_DIR_NAME = 'weekly-quiz-workbench';
+const WORKBENCH_SESSION_FILE_NAME = 'track-session.json';
 
 export interface TrackSession {
   baseUrl?: string;
@@ -32,14 +37,20 @@ function readNestedString(record: Record<string, unknown>, path: string[]): stri
 }
 
 export async function loadSession(filePath: string | undefined): Promise<TrackSession> {
-  if (!filePath) {
-    return {};
-  }
+  const resolvedPath = filePath ?? getDefaultWorkbenchSessionPath();
 
-  const content = await readFile(filePath, 'utf8');
+  let content: string;
+  try {
+    content = await readFile(resolvedPath, 'utf8');
+  } catch (error) {
+    if (filePath === undefined && isNodeErrorCode(error, 'ENOENT')) {
+      return {};
+    }
+    throw error;
+  }
   const parsed = yaml.parse(content) as unknown;
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`Invalid Track session file: ${filePath}`);
+    throw new Error(`Invalid Track session file: ${resolvedPath}`);
   }
 
   const record = parsed as Record<string, unknown>;
@@ -69,4 +80,21 @@ export async function loadSession(filePath: string | undefined): Promise<TrackSe
       readNestedString(record, ['track', 'authorization']),
     ),
   };
+}
+
+export function getDefaultWorkbenchSessionPath(): string {
+  const configRoot =
+    process.env.LOCALAPPDATA ??
+    process.env.APPDATA ??
+    process.env.XDG_CONFIG_HOME ??
+    join(homedir(), '.config');
+  return join(
+    configRoot,
+    WORKBENCH_CONFIG_DIR_NAME,
+    WORKBENCH_SESSION_FILE_NAME,
+  );
+}
+
+function isNodeErrorCode(error: unknown, code: string): boolean {
+  return error instanceof Error && 'code' in error && error.code === code;
 }

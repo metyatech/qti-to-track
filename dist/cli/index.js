@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 import { Command } from 'commander';
 import { loadQtiPackage } from '../fs/qti-loader.js';
 import { toTrackPayloads } from '../generator/track-generator.js';
-import { loadTrackMap, saveTrackMap, updateTrackMapForPublish } from '../publish/track-map.js';
+import { loadTrackMap, saveTrackMap, updateTrackMapForPublish, } from '../publish/track-map.js';
 import { publishToTrack, toTrackMaterialPayload } from '../publish/publisher.js';
 import { loadSession } from './session.js';
 const program = new Command();
@@ -84,14 +84,28 @@ program
         }
         const trackMapPath = typeof options.trackMap === 'string' ? options.trackMap : undefined;
         const trackMapDisabled = options.trackMap === false;
+        let trackMap = { version: 1 };
+        const useTrackMap = !trackMapDisabled && Boolean(trackMapPath);
+        if (useTrackMap) {
+            trackMap = await loadTrackMap(trackMapPath);
+        }
+        validateTrackMapTargetConflicts(options, trackMap.target);
         const isDryRun = !options.yes;
         if (isDryRun && !options.json) {
             console.log('[DRY-RUN] Executing publish in dry-run mode. No changes will be made.');
         }
         // 1. Resolve credentials
         const session = await loadSession(options.session);
-        const appspace = options.appspace ?? process.env.TRACK_TCM_APPSPACE ?? session.appspace;
-        const baseUrl = options.baseUrl ?? process.env.TRACK_TCM_BASE_URL ?? session.baseUrl ?? DEFAULT_BASE_URL;
+        validateTrackMapSessionConflicts(session, trackMap.target);
+        const appspace = options.appspace ??
+            process.env.TRACK_TCM_APPSPACE ??
+            session.appspace ??
+            trackMap.target?.appspace;
+        const baseUrl = options.baseUrl ??
+            process.env.TRACK_TCM_BASE_URL ??
+            session.baseUrl ??
+            trackMap.target?.base_url ??
+            DEFAULT_BASE_URL;
         const cookie = options.cookie ?? process.env.TRACK_TCM_COOKIE ?? session.cookie;
         const authorization = options.authorization ?? process.env.TRACK_TCM_AUTHORIZATION ?? session.authorization;
         const needsTrackClient = !isDryRun ||
@@ -125,12 +139,6 @@ program
                 console.log(`Uploading images...`);
             const { uploadImagesAndReplaceUrls } = await import('../generator/image-uploader.js');
             payload.questions = await uploadImagesAndReplaceUrls(payload.questions, options.qtiDir, apiClient);
-        }
-        // 4. Load track-map
-        let trackMap = { version: 1 };
-        const useTrackMap = !trackMapDisabled && Boolean(trackMapPath);
-        if (useTrackMap) {
-            trackMap = await loadTrackMap(trackMapPath);
         }
         // 5. Publish
         const publishResult = await publishToTrack(apiClient, payload.materialDraft, payload.questions, {
@@ -177,3 +185,30 @@ program
     }
 });
 await program.parseAsync(process.argv);
+function validateTrackMapTargetConflicts(options, target) {
+    if (target === undefined)
+        return;
+    assertTargetMatch(options.baseUrl, '--base-url', target.base_url, 'Track map target base_url', normalizeBaseUrl);
+    assertTargetMatch(options.appspace, '--appspace', target.appspace, 'Track map target appspace');
+    assertTargetMatch(process.env.TRACK_TCM_BASE_URL, 'TRACK_TCM_BASE_URL', target.base_url, 'Track map target base_url', normalizeBaseUrl);
+    assertTargetMatch(process.env.TRACK_TCM_APPSPACE, 'TRACK_TCM_APPSPACE', target.appspace, 'Track map target appspace');
+}
+function validateTrackMapSessionConflicts(session, target) {
+    if (target === undefined)
+        return;
+    assertTargetMatch(session.baseUrl, 'Track session baseUrl', target.base_url, 'Track map target base_url', normalizeBaseUrl);
+    assertTargetMatch(session.appspace, 'Track session appspace', target.appspace, 'Track map target appspace');
+}
+function assertTargetMatch(value, valueLabel, targetValue, targetLabel, normalize = identity) {
+    if (value === undefined)
+        return;
+    if (normalize(value) !== normalize(targetValue)) {
+        throw new Error(`${valueLabel} ${value} conflicts with ${targetLabel} ${targetValue}`);
+    }
+}
+function normalizeBaseUrl(value) {
+    return value.replace(/\/+$/u, '');
+}
+function identity(value) {
+    return value;
+}

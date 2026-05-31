@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
@@ -46,4 +48,55 @@ describe('publish CLI', () => {
       stderr: expect.stringContaining('Track appspace is required'),
     });
   });
+
+  it('uses track-map target as publish target defaults', async () => {
+    const trackMapPath = await writeTrackMapTarget({
+      baseUrl: 'https://tracks.example.test',
+      appspace: 'map-appspace',
+    });
+
+    await expect(
+      runPublish(['--track-map', trackMapPath, '--check-existing']),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining('Track credentials are required'),
+    });
+  });
+
+  it('rejects publish target values that conflict with track-map target', async () => {
+    const trackMapPath = await writeTrackMapTarget({
+      baseUrl: 'https://tracks.example.test',
+      appspace: 'map-appspace',
+    });
+
+    await expect(
+      runPublish([
+        '--track-map',
+        trackMapPath,
+        '--base-url',
+        'https://other.example.test',
+        '--appspace',
+        'other-appspace',
+      ]),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining('conflicts with Track map target'),
+    });
+  });
 });
+
+async function writeTrackMapTarget(target: {
+  baseUrl: string;
+  appspace: string;
+}): Promise<string> {
+  const dir = join(
+    tmpdir(),
+    `qti-to-track-map-target-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  await mkdir(dir, { recursive: true });
+  const trackMapPath = join(dir, 'track-map.yaml');
+  await writeFile(
+    trackMapPath,
+    `version: 1\ntarget:\n  base_url: ${target.baseUrl}\n  appspace: ${target.appspace}\n`,
+    'utf8',
+  );
+  return trackMapPath;
+}
