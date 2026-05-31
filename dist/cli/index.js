@@ -1,49 +1,14 @@
 #!/usr/bin/env node
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { Command } from 'commander';
-import yaml from 'yaml';
 import { loadQtiPackage } from '../fs/qti-loader.js';
 import { toTrackPayloads } from '../generator/track-generator.js';
 import { loadTrackMap, saveTrackMap, updateTrackMapForPublish } from '../publish/track-map.js';
 import { publishToTrack, toTrackMaterialPayload } from '../publish/publisher.js';
+import { loadSession } from './session.js';
 const program = new Command();
 const DEFAULT_BASE_URL = 'https://tracks.dev';
-function pickString(...values) {
-    for (const value of values) {
-        if (typeof value === 'string' && value.length > 0) {
-            return value;
-        }
-    }
-    return undefined;
-}
-function readNestedString(record, path) {
-    let value = record;
-    for (const segment of path) {
-        if (!value || typeof value !== 'object' || Array.isArray(value)) {
-            return undefined;
-        }
-        value = value[segment];
-    }
-    return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-async function loadSession(filePath) {
-    if (!filePath) {
-        return {};
-    }
-    const content = await readFile(filePath, 'utf8');
-    const parsed = yaml.parse(content);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        throw new Error(`Invalid Track session file: ${filePath}`);
-    }
-    const record = parsed;
-    return {
-        baseUrl: pickString(record.baseUrl, record.base_url, readNestedString(record, ['target', 'base_url']), readNestedString(record, ['target', 'baseUrl'])),
-        appspace: pickString(record.appspace, readNestedString(record, ['target', 'appspace']), readNestedString(record, ['track', 'appspace'])),
-        cookie: pickString(record.cookie, readNestedString(record, ['credentials', 'cookie']), readNestedString(record, ['auth', 'cookie']), readNestedString(record, ['track', 'cookie'])),
-        authorization: pickString(record.authorization, readNestedString(record, ['credentials', 'authorization']), readNestedString(record, ['auth', 'authorization']), readNestedString(record, ['track', 'authorization'])),
-    };
-}
 program
     .name('qti-to-track')
     .description('Convert QTI XML package to Track JSON payloads');
@@ -170,7 +135,8 @@ program
         // 5. Publish
         const publishResult = await publishToTrack(apiClient, payload.materialDraft, payload.questions, {
             dryRun: isDryRun,
-            adoptExistingByTitle: options.adoptExistingByTitle || options.checkExisting,
+            adoptExistingByTitle: options.adoptExistingByTitle,
+            checkExisting: options.checkExisting,
             skipMaterial: options.material === false,
         });
         // 6. Update track-map

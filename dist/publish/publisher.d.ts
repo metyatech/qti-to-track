@@ -9,6 +9,7 @@ export interface PublishResult {
 export interface PublishOptions {
     dryRun: boolean;
     adoptExistingByTitle: boolean;
+    checkExisting?: boolean;
     skipMaterial?: boolean;
 }
 export declare function toTrackMaterialPayload(materialDraft: TrackMaterialDraft, questionIds: number[]): TrackMaterialPayload;

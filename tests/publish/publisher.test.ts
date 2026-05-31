@@ -102,9 +102,7 @@ describe('publishToTrack', () => {
     });
   });
 
-  it('returns dummy IDs in dry run', async () => {
-    const mockClient = {} as unknown as TrackApiClient;
-
+  it('returns dummy IDs in dry run without touching Track when no lookup option is enabled', async () => {
     const result = await publishToTrack(undefined, mockMaterialDraft, mockQuestionPayloads, {
       dryRun: true,
       adoptExistingByTitle: false,
@@ -113,6 +111,96 @@ describe('publishToTrack', () => {
     expect(result.trackQuestionIds).toEqual([0]);
     expect(result.trackMaterialId).toBe(0);
     expect(result.trackReleaseId).toBeUndefined();
+  });
+
+  it('checks question and material duplicates during dry run when checkExisting is true', async () => {
+    const mockClient = {
+      findQuestionsByTitle: vi.fn().mockResolvedValue([]),
+      findMaterialsByTitle: vi.fn().mockResolvedValue([]),
+      createQuestion: vi.fn(),
+      createMaterial: vi.fn(),
+      createRelease: vi.fn(),
+    } as unknown as TrackApiClient;
+
+    const result = await publishToTrack(mockClient, mockMaterialDraft, mockQuestionPayloads, {
+      dryRun: true,
+      adoptExistingByTitle: false,
+      checkExisting: true,
+    });
+
+    expect(result.trackQuestionIds).toEqual([0]);
+    expect(result.trackMaterialId).toBe(0);
+    expect(mockClient.findQuestionsByTitle).toHaveBeenCalledWith('Q1');
+    expect(mockClient.findMaterialsByTitle).toHaveBeenCalledWith('Test Material');
+    expect(mockClient.createQuestion).not.toHaveBeenCalled();
+    expect(mockClient.createMaterial).not.toHaveBeenCalled();
+    expect(mockClient.createRelease).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when checkExisting finds a duplicate question during dry run', async () => {
+    const mockClient = {
+      findQuestionsByTitle: vi.fn().mockResolvedValue([{ id: 101, title: 'Q1' }]),
+    } as unknown as TrackApiClient;
+
+    await expect(publishToTrack(mockClient, mockMaterialDraft, mockQuestionPayloads, {
+      dryRun: true,
+      adoptExistingByTitle: false,
+      checkExisting: true,
+    }))
+      .rejects.toThrow(/Duplicate question found/);
+  });
+
+  it('fails closed when checkExisting finds a duplicate material during dry run', async () => {
+    const mockClient = {
+      findQuestionsByTitle: vi.fn().mockResolvedValue([]),
+      findMaterialsByTitle: vi.fn().mockResolvedValue([{ id: 201, title: 'Test Material' }]),
+    } as unknown as TrackApiClient;
+
+    await expect(publishToTrack(mockClient, mockMaterialDraft, mockQuestionPayloads, {
+      dryRun: true,
+      adoptExistingByTitle: false,
+      checkExisting: true,
+    }))
+      .rejects.toThrow(/Duplicate material found/);
+  });
+
+  it('does not check material duplicates when --no-material skips material', async () => {
+    const mockClient = {
+      findQuestionsByTitle: vi.fn().mockResolvedValue([]),
+      findMaterialsByTitle: vi.fn(),
+    } as unknown as TrackApiClient;
+
+    const result = await publishToTrack(mockClient, mockMaterialDraft, mockQuestionPayloads, {
+      dryRun: true,
+      adoptExistingByTitle: false,
+      checkExisting: true,
+      skipMaterial: true,
+    });
+
+    expect(result.materialAction).toBe('skipped');
+    expect(mockClient.findQuestionsByTitle).toHaveBeenCalledWith('Q1');
+    expect(mockClient.findMaterialsByTitle).not.toHaveBeenCalled();
+  });
+
+  it('keeps adopt-existing separate from dry-run duplicate checking', async () => {
+    const mockClient = {
+      findQuestionsByTitle: vi.fn().mockResolvedValue([{ id: 101, title: 'Q1' }]),
+      findMaterialsByTitle: vi.fn().mockResolvedValue([{ id: 201, title: 'Test Material' }]),
+      updateQuestion: vi.fn(),
+      updateMaterial: vi.fn(),
+    } as unknown as TrackApiClient;
+
+    const result = await publishToTrack(mockClient, mockMaterialDraft, mockQuestionPayloads, {
+      dryRun: true,
+      adoptExistingByTitle: true,
+      checkExisting: false,
+    });
+
+    expect(result.trackQuestionIds).toEqual([101]);
+    expect(result.trackMaterialId).toBe(201);
+    expect(result.materialAction).toBe('dry-run');
+    expect(mockClient.updateQuestion).not.toHaveBeenCalled();
+    expect(mockClient.updateMaterial).not.toHaveBeenCalled();
   });
 
   it('skips material and release when requested', async () => {

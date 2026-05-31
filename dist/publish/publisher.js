@@ -17,32 +17,41 @@ function requireClient(client, action) {
     }
     return client;
 }
+async function findExactQuestionByTitle(client, title) {
+    const existingQuestions = await client.findQuestionsByTitle(title);
+    return existingQuestions.find((question) => question.title === title);
+}
+async function findExactMaterialByTitle(client, title) {
+    const existingMaterials = await client.findMaterialsByTitle(title);
+    return existingMaterials.find((material) => material.title === title);
+}
 export async function publishToTrack(client, materialDraft, questionsPayloads, options) {
-    const { dryRun, adoptExistingByTitle, skipMaterial = false } = options;
+    const { dryRun, adoptExistingByTitle, checkExisting = false, skipMaterial = false } = options;
     const publishedQuestionIds = [];
+    const shouldLookupExisting = adoptExistingByTitle || checkExisting || !dryRun;
+    const lookupClient = shouldLookupExisting
+        ? requireClient(client, adoptExistingByTitle ? 'adopt existing Track content' : 'check existing Track content')
+        : undefined;
     for (const questionPayload of questionsPayloads) {
+        let existingId = undefined;
+        if (shouldLookupExisting) {
+            const exactMatch = await findExactQuestionByTitle(lookupClient, questionPayload.title);
+            if (exactMatch) {
+                if (adoptExistingByTitle) {
+                    console.log(`[PUBLISH] Adopting existing question: ${questionPayload.title} (ID: ${exactMatch.id})`);
+                    existingId = exactMatch.id;
+                }
+                else {
+                    throw new Error(`Duplicate question found: "${questionPayload.title}". Use --adopt-existing-by-title to update.`);
+                }
+            }
+        }
         if (dryRun) {
             console.log(`[DRY-RUN] Would publish question: ${questionPayload.title}`);
-            publishedQuestionIds.push(0); // Dummy ID
+            publishedQuestionIds.push(existingId ?? 0);
             continue;
         }
         const trackClient = requireClient(client, 'publish questions');
-        let existingId = undefined;
-        if (adoptExistingByTitle) {
-            const existingQuestions = await trackClient.findQuestionsByTitle(questionPayload.title);
-            const exactMatch = existingQuestions.find(q => q.title === questionPayload.title);
-            if (exactMatch) {
-                console.log(`[PUBLISH] Adopting existing question: ${questionPayload.title} (ID: ${exactMatch.id})`);
-                existingId = exactMatch.id;
-            }
-        }
-        else {
-            const existingQuestions = await trackClient.findQuestionsByTitle(questionPayload.title);
-            const exactMatch = existingQuestions.find(q => q.title === questionPayload.title);
-            if (exactMatch) {
-                throw new Error(`Duplicate question found: "${questionPayload.title}". Use --adopt-existing-by-title to update.`);
-            }
-        }
         if (existingId !== undefined) {
             await trackClient.updateQuestion(existingId, questionPayload);
             publishedQuestionIds.push(existingId);
@@ -61,31 +70,28 @@ export async function publishToTrack(client, materialDraft, questionsPayloads, o
     }
     // Material
     const materialPayload = toTrackMaterialPayload(materialDraft, publishedQuestionIds);
+    let existingMaterialId = undefined;
+    if (shouldLookupExisting) {
+        const exactMatch = await findExactMaterialByTitle(lookupClient, materialPayload.title);
+        if (exactMatch) {
+            if (adoptExistingByTitle) {
+                console.log(`[PUBLISH] Adopting existing material: ${materialPayload.title} (ID: ${exactMatch.id})`);
+                existingMaterialId = exactMatch.id;
+            }
+            else {
+                throw new Error(`Duplicate material found: "${materialPayload.title}". Use --adopt-existing-by-title to update.`);
+            }
+        }
+    }
     if (dryRun) {
         console.log(`[DRY-RUN] Would publish material: ${materialPayload.title}`);
         return {
             trackQuestionIds: publishedQuestionIds,
-            trackMaterialId: 0,
+            trackMaterialId: existingMaterialId ?? 0,
             materialAction: 'dry-run',
         };
     }
     const trackClient = requireClient(client, 'publish material');
-    let existingMaterialId = undefined;
-    if (adoptExistingByTitle) {
-        const existingMaterials = await trackClient.findMaterialsByTitle(materialPayload.title);
-        const exactMatch = existingMaterials.find(m => m.title === materialPayload.title);
-        if (exactMatch) {
-            console.log(`[PUBLISH] Adopting existing material: ${materialPayload.title} (ID: ${exactMatch.id})`);
-            existingMaterialId = exactMatch.id;
-        }
-    }
-    else {
-        const existingMaterials = await trackClient.findMaterialsByTitle(materialPayload.title);
-        const exactMatch = existingMaterials.find(m => m.title === materialPayload.title);
-        if (exactMatch) {
-            throw new Error(`Duplicate material found: "${materialPayload.title}". Use --adopt-existing-by-title to update.`);
-        }
-    }
     if (existingMaterialId !== undefined) {
         await trackClient.updateMaterial(1, existingMaterialId, materialPayload);
         return {

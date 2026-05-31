@@ -40,4 +40,10 @@ describe('publish CLI', () => {
       stderr: expect.stringContaining('--track-map and --no-track-map cannot be used together'),
     });
   });
+
+  it('requires credentials when --check-existing is used during dry-run', async () => {
+    await expect(runPublish(['--check-existing'])).rejects.toMatchObject({
+      stderr: expect.stringContaining('Track appspace is required'),
+    });
+  });
 });
