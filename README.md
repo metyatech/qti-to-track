@@ -173,9 +173,9 @@ uses a collapsed HTML details block:
 <details>
 <summary><strong>採点基準（最大点: 3点）</strong></summary>
 
-[2] Mentions nucleus
+[2点] Mentions nucleus
 
-[1] Mentions cell
+[1点] Mentions cell
 
 </details>
 ```

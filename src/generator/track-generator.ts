@@ -69,7 +69,10 @@ function formatMaxScore(maxScore: number): string {
 }
 
 function buildScoringFooter(item: ParsedQtiItem): string | undefined {
-  const rubric = item.scorerRubric.join('\n\n').trim();
+  const rubric = item.scorerRubric
+    .map((line) => line.replace(/\[(\d+)\]/g, '[$1点]'))
+    .join('\n\n')
+    .trim();
   const maxScore = item.maxScore === undefined ? undefined : formatMaxScore(item.maxScore);
   if (rubric.length === 0 && maxScore === undefined) {
     return undefined;
