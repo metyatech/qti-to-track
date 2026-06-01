@@ -162,6 +162,24 @@ Question kinds map as follows:
 | `textEntryInteraction` | `2` (fill-in-the-blank) |
 | `extendedTextInteraction` | `3` (free text) |
 
+When an item contains `MAXSCORE` and a scorer rubric, qti-to-track appends the
+scoring information to the bottom of the Track question content because Track
+does not expose dedicated fields for per-question scoring criteria. The footer
+uses a collapsed HTML details block:
+
+```html
+---
+
+<details>
+<summary><strong>採点基準（最大点: 3点）</strong></summary>
+
+[2] Mentions nucleus
+
+[1] Mentions cell
+
+</details>
+```
+
 ## Development
 
 ```sh
