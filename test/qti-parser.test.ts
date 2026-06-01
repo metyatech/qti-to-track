@@ -52,6 +52,12 @@ describe('qti-parser', () => {
             <qti-assessment-item:value>CHOICE_B</qti-assessment-item:value>
           </qti-assessment-item:correctResponse>
         </qti-assessment-item:responseDeclaration>
+        <qti-assessment-item:outcomeDeclaration identifier="SCORE" cardinality="single" baseType="float" />
+        <qti-assessment-item:outcomeDeclaration identifier="MAXSCORE" cardinality="single" baseType="float">
+          <qti-assessment-item:defaultValue>
+            <qti-assessment-item:value>3.5</qti-assessment-item:value>
+          </qti-assessment-item:defaultValue>
+        </qti-assessment-item:outcomeDeclaration>
         <qti-assessment-item:itemBody>
           <qti-assessment-item:p>Select the capital of France.</qti-assessment-item:p>
           <qti-assessment-item:choiceInteraction responseIdentifier="RESPONSE" maxChoices="1">
@@ -59,6 +65,7 @@ describe('qti-parser', () => {
             <qti-assessment-item:simpleChoice identifier="CHOICE_B">Paris</qti-assessment-item:simpleChoice>
           </qti-assessment-item:choiceInteraction>
         </qti-assessment-item:itemBody>
+        <qti-assessment-item:rubricBlock view="candidate">Read the question carefully</qti-assessment-item:rubricBlock>
         <qti-assessment-item:rubricBlock view="scorer">Geography basics</qti-assessment-item:rubricBlock>
         <qti-assessment-item:modalFeedback identifier="FB-1" outcomeIdentifier="FEEDBACK" showHide="show">Correct: Paris</qti-assessment-item:modalFeedback>
       </qti-assessment-item:assessmentItem>
@@ -75,7 +82,9 @@ describe('qti-parser', () => {
       { identifier: 'CHOICE_B', text: 'Paris' },
     ]);
     expect(parsed.correctResponses).toEqual(['CHOICE_B']);
-    expect(parsed.rubric).toEqual(['Geography basics']);
+    expect(parsed.rubric).toEqual(['Read the question carefully', 'Geography basics']);
+    expect(parsed.scorerRubric).toEqual(['Geography basics']);
+    expect(parsed.maxScore).toBe(3.5);
     expect(parsed.feedback).toEqual(['Correct: Paris']);
   });
 

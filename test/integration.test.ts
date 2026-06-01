@@ -64,6 +64,20 @@ describe('integration: markdown-to-qti fixtures', () => {
     expect(descriptiveQuestion?.questionKind).toBe(3);
     expect(descriptiveQuestion?.choices).toBeUndefined();
     expect(descriptiveQuestion?.blanks).toBeUndefined();
+    expect(descriptiveQuestion?.content).toBe([
+      'Explain the diagram below. ![Cell diagram](assets/diagram.png)',
+      '',
+      '---',
+      '',
+      '<details>',
+      '<summary><strong>採点基準（最大点: 3点）</strong></summary>',
+      '',
+      '[2] Mentions nucleus',
+      '',
+      '[1] Mentions cell',
+      '',
+      '</details>',
+    ].join('\n'));
   });
 
   it('rounds material basicTimeMinutes up from fixture section time limit', async () => {
