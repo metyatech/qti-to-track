@@ -60,6 +60,10 @@ function readAnyStringAttribute(node, keys) {
 function readResponseIdentifierAttribute(node) {
     return readAnyStringAttribute(node, ['@_responseIdentifier', '@_response-identifier']);
 }
+function hasViewAttribute(node, view) {
+    const rawView = readStringAttribute(node, '@_view');
+    return rawView?.toLowerCase().split(/\s+/u).includes(view) ?? false;
+}
 function asRecords(value) {
     return asArray(value).filter((node) => !!node && typeof node === 'object' && !Array.isArray(node));
 }
@@ -475,16 +479,33 @@ function extractChoicesFromXml(xml, interactionType) {
         .filter((choice) => choice.identifier.length > 0);
     return choices.length > 0 ? choices : undefined;
 }
-function extractRubricFromXml(xml) {
+function extractRubricFromXml(xml, options = {}) {
     const item = parseOrderedAssessmentItemXml(xml);
     if (item === undefined) {
         return undefined;
     }
     const context = createMarkdownRenderContext({});
     const rubric = findOrderedDescendantElements(item.children, 'rubricBlock')
+        .filter((element) => options.view === undefined || hasViewAttribute(element.attrs, options.view))
         .map((element) => renderOrderedMarkdownBlocks(element.children, context))
         .filter((value) => value.length > 0);
     return rubric.length > 0 ? rubric : undefined;
+}
+function extractMaxScore(itemNode) {
+    const maxScoreDeclaration = asRecords(itemNode.outcomeDeclaration)
+        .find((declaration) => readStringAttribute(declaration, '@_identifier') === 'MAXSCORE');
+    if (maxScoreDeclaration === undefined) {
+        return undefined;
+    }
+    const defaultValue = asRecord(maxScoreDeclaration.defaultValue, 'Invalid MAXSCORE outcomeDeclaration: expected defaultValue object node.');
+    const rawValue = asArray(defaultValue.value)
+        .map((value) => getTextContent(value).trim())
+        .find((value) => value.length > 0);
+    if (rawValue === undefined) {
+        return undefined;
+    }
+    const maxScore = Number(rawValue);
+    return Number.isFinite(maxScore) && maxScore >= 0 ? maxScore : undefined;
 }
 function extractFeedbackFromXml(xml) {
     const item = parseOrderedAssessmentItemXml(xml);
@@ -633,6 +654,7 @@ export function parseAssessmentItemXml(xml) {
         : [];
     const choices = extractChoicesFromXml(xml, interactionType);
     const rubric = extractRubricFromXml(xml);
+    const scorerRubric = extractRubricFromXml(xml, { view: 'scorer' });
     const feedback = extractFeedbackFromXml(xml);
     return {
         identifier,
@@ -644,6 +666,8 @@ export function parseAssessmentItemXml(xml) {
         correctResponses: extractCorrectResponses(itemNode),
         blanks,
         rubric: rubric ?? extractRubric(itemNode),
+        scorerRubric: scorerRubric ?? [],
+        maxScore: extractMaxScore(itemNode),
         feedback: feedback ?? extractFeedback(itemNode),
     };
 }

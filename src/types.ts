@@ -47,6 +47,8 @@ export interface ParsedQtiItem {
   correctResponses: string[];
   blanks: ParsedBlank[];
   rubric: string[];
+  scorerRubric: string[];
+  maxScore?: number;
   feedback: string[];
 }
 
