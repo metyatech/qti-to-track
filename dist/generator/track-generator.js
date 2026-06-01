@@ -40,6 +40,35 @@ function ensureClozePlaceholders(content, blanks) {
     const placeholders = blanks.map(toPlaceholder).join(' ');
     return content.length > 0 ? `${content}\n${placeholders}` : placeholders;
 }
+function formatMaxScore(maxScore) {
+    return Number.isInteger(maxScore) ? String(maxScore) : String(maxScore);
+}
+function buildScoringFooter(item) {
+    const rubric = item.scorerRubric.join('\n\n').trim();
+    const maxScore = item.maxScore === undefined ? undefined : formatMaxScore(item.maxScore);
+    if (rubric.length === 0 && maxScore === undefined) {
+        return undefined;
+    }
+    const summary = maxScore === undefined
+        ? '採点基準'
+        : `採点基準（最大点: ${maxScore}点）`;
+    const body = rubric.length > 0 ? rubric : `最大点: ${maxScore}点`;
+    return [
+        '<details>',
+        `<summary><strong>${summary}</strong></summary>`,
+        '',
+        body,
+        '',
+        '</details>',
+    ].join('\n');
+}
+function appendScoringFooter(content, item) {
+    const footer = buildScoringFooter(item);
+    if (footer === undefined) {
+        return content;
+    }
+    return [content.trimEnd(), '---', footer].filter((value) => value.length > 0).join('\n\n');
+}
 function estimateItemTimeLimitSeconds(item) {
     if (isPositiveFiniteNumber(item.timeLimitSeconds)) {
         return item.timeLimitSeconds;
@@ -53,11 +82,14 @@ function estimateMaterialTimeLimitSeconds(parsed) {
     return parsed.items.reduce((sum, item) => sum + estimateItemTimeLimitSeconds(item), 0);
 }
 function toQuestionPayload(item) {
+    const content = appendScoringFooter(item.interactionType === 'text-entry'
+        ? ensureClozePlaceholders(item.prompt, item.blanks)
+        : item.prompt, item);
     const basePayload = {
         title: item.title,
         questionKind: toQuestionKind(item),
         status: 2,
-        content: item.prompt,
+        content,
         howToSolve: item.feedback.join('\n').trim(),
         quizCategories: [99],
         availableApps: ['training'],
@@ -72,7 +104,6 @@ function toQuestionPayload(item) {
     if (item.interactionType === 'text-entry') {
         return {
             ...basePayload,
-            content: ensureClozePlaceholders(item.prompt, item.blanks),
             blanks: item.blanks.map(toTrackBlankPayload),
         };
     }
