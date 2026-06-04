@@ -4,3 +4,4 @@
 {"id":"k5opYP5I","description":"Preserve Track map release IDs when updating existing materials","stage":"committed","createdAt":"2026-05-31T11:21:15.956Z","updatedAt":"2026-05-31T11:22:04.934Z","committedEventId":"ZKNQqmMNM1ATbEMr"}
 {"id":"QfOgzJST","description":"Fix Track cloze blank positioning for QTI text-entry interactions","stage":"committed","createdAt":"2026-05-31T11:38:05.428Z","updatedAt":"2026-05-31T11:41:32.955Z","committedEventId":"56Cc7nYycD8ngYwR"}
 {"id":"JIxAtJlN","description":"Implement qti-to-track collapsible scoring footer","stage":"committed","createdAt":"2026-06-01T09:24:12.240Z","updatedAt":"2026-06-01T09:31:57.886Z","committedEventId":"oabdJr7peUiaZD78"}
+{"id":"AB4BiZuV","description":"Fail Track publish when image upload cannot replace local paths","stage":"committed","createdAt":"2026-06-04T08:52:08.021Z","updatedAt":"2026-06-04T08:57:55.398Z","committedEventId":"nDE1vrcE9YQfWMVg"}

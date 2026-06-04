@@ -17,17 +17,16 @@ async function replaceImagesInText(text, qtiDir, apiClient, uploadCache) {
         const localPath = resolve(qtiDir, src);
         let remoteUrl = uploadCache.get(localPath);
         if (!remoteUrl) {
+            const buffer = await readFile(localPath);
+            const blob = new Blob([buffer]);
+            const filename = src.split(/[/\\]/).pop() || 'image.png';
             try {
-                const buffer = await readFile(localPath);
-                const blob = new Blob([buffer]);
-                const filename = src.split(/[/\\]/).pop() || 'image.png';
                 remoteUrl = await apiClient.uploadImage(blob, filename);
-                uploadCache.set(localPath, remoteUrl);
             }
             catch (error) {
-                console.error(`Failed to upload image ${localPath}:`, error instanceof Error ? error.message : String(error));
-                continue;
+                throw new Error(`Failed to upload image ${localPath}: ${error instanceof Error ? error.message : String(error)}`);
             }
+            uploadCache.set(localPath, remoteUrl);
         }
         if (remoteUrl) {
             result = result.replace(fullMatch, `![${alt}](${remoteUrl})`);

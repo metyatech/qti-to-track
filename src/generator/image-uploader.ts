@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { resolve, join, dirname } from 'node:path';
+import { resolve } from 'node:path';
 import type { TrackChoicePayload, TrackQuestionPayload } from '@metyatech/track-tcm-api-client';
 
 interface TrackApiClientUpload {
@@ -34,16 +34,17 @@ async function replaceImagesInText(
     let remoteUrl = uploadCache.get(localPath);
 
     if (!remoteUrl) {
+      const buffer = await readFile(localPath);
+      const blob = new Blob([buffer]);
+      const filename = src.split(/[/\\]/).pop() || 'image.png';
       try {
-        const buffer = await readFile(localPath);
-        const blob = new Blob([buffer]);
-        const filename = src.split(/[/\\]/).pop() || 'image.png';
         remoteUrl = await apiClient.uploadImage(blob, filename);
-        uploadCache.set(localPath, remoteUrl);
       } catch (error) {
-        console.error(`Failed to upload image ${localPath}:`, error instanceof Error ? error.message : String(error));
-        continue;
+        throw new Error(
+          `Failed to upload image ${localPath}: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
+      uploadCache.set(localPath, remoteUrl);
     }
 
     if (remoteUrl) {

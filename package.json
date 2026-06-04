@@ -59,7 +59,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@metyatech/track-tcm-api-client": "github:metyatech/track-tcm-api-client#161d352f03d7bb49b8474776fc985990bcbd4478",
+    "@metyatech/track-tcm-api-client": "github:metyatech/track-tcm-api-client#49aa590fdd2940f03843d7bad2ced6353fe9958f",
     "commander": "^14.0.3",
     "fast-xml-parser": "^5.8.0",
     "yaml": "^2.9.0"
