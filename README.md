@@ -113,6 +113,8 @@ qti-to-track publish --qti-dir ./my-qti-package --yes --track-map ./track-map.ya
 
 Dry-run behavior: without `--yes`, QTI parsing and payload generation run without Track credentials. Credentials are required in dry-run only when an option needs the Track API, such as `--upload-images`, `--adopt-existing-by-title`, or `--check-existing`. `--check-existing` performs Track API duplicate lookups even in dry-run and fails closed on exact-title question or material duplicates. `--adopt-existing-by-title` is different: matching titles are treated as update targets instead of duplicates, and real publish updates those existing Track records. Real publish without `--adopt-existing-by-title` also fails closed on exact-title duplicates.
 
+When `--upload-images` is used, qti-to-track reads each local image's original dimensions and sends them to the Track upload-signature API. If a local image's dimensions cannot be determined, publish fails instead of leaving a local path in Track content.
+
 ## Track-map compatibility
 
 When `--track-map` is used, the publish command creates or updates a `track-map.yaml` mapping file compatible with `@metyatech/weekly-quiz-workbench`. It stores Track IDs, updated timestamps, and stable hashes of API payload JSON so duplicate questions can be tracked between executions. Dry-runs do not write the track-map. `--no-track-map` disables all track-map reads and writes. When `--no-material` is used, no material entry is written.
