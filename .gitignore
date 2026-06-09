@@ -1,1 +1,14 @@
 .threads.jsonl
+node_modules/
+dist/
+coverage/
+.vite/
+*.tsbuildinfo
+*.tgz
+
+# Local Track/API inspection scratch files
+inspect-upload*.ts
+test-find.ts
+test-img*.ts
+requests.json
+uploads.json
