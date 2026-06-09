@@ -6,3 +6,4 @@
 {"id":"JIxAtJlN","description":"Implement qti-to-track collapsible scoring footer","stage":"committed","createdAt":"2026-06-01T09:24:12.240Z","updatedAt":"2026-06-01T09:31:57.886Z","committedEventId":"oabdJr7peUiaZD78"}
 {"id":"AB4BiZuV","description":"Fail Track publish when image upload cannot replace local paths","stage":"committed","createdAt":"2026-06-04T08:52:08.021Z","updatedAt":"2026-06-04T08:57:55.398Z","committedEventId":"nDE1vrcE9YQfWMVg"}
 {"id":"cDF60Ap4","description":"Send original image width and height when uploading Track images","stage":"committed","createdAt":"2026-06-04T11:54:31.931Z","updatedAt":"2026-06-04T12:14:45.997Z","committedEventId":"b60ibkqDNt5TCyMW"}
+{"id":"xdoqMlSU","description":"Implement robust qti-to-track partial publish recovery","stage":"pending","createdAt":"2026-06-09T12:10:01.473Z","updatedAt":"2026-06-09T12:10:01.473Z"}
