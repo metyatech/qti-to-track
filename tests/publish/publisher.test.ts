@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { publishToTrack, toTrackMaterialPayload } from '../../src/publish/publisher.js';
+import { publishToTrack, toTrackMaterialPayload, PartialPublishError } from '../../src/publish/publisher.js';
 import { TrackApiError, type TrackApiClient, type TrackMaterialPayload, type TrackQuestionPayload } from '@metyatech/track-tcm-api-client';
 import type { TrackMaterialDraft } from '../../src/types.js';
 
@@ -359,5 +359,77 @@ describe('publishToTrack', () => {
       ...mockMaterialPayload,
       questionIds: [11, 12],
     });
+  });
+
+  it('throws PartialPublishError when a later question fails, returning earlier successes', async () => {
+    const mockClient = {
+      findQuestionsByTitle: vi.fn().mockResolvedValue([]),
+      createQuestion: vi.fn()
+        .mockResolvedValueOnce({ id: 101, title: 'Q1' })
+        .mockRejectedValueOnce(new Error('Network error on Q2')),
+    } as unknown as TrackApiClient;
+
+    const twoQuestions = [
+      mockQuestionPayloads[0]!,
+      { ...mockQuestionPayloads[0]!, title: 'Q2' }
+    ];
+
+    try {
+      await publishToTrack(mockClient, mockMaterialDraft, twoQuestions, {
+        dryRun: false,
+        adoptExistingByTitle: false,
+      });
+      expect.fail('Should have thrown PartialPublishError');
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(PartialPublishError);
+      expect(e.originalError.message).toBe('Network error on Q2');
+      expect(e.partialResult.trackQuestionIds).toEqual([101]);
+      expect(e.partialResult.materialAction).toBe('skipped');
+    }
+  });
+
+  it('throws PartialPublishError when material creation fails after questions succeed', async () => {
+    const mockClient = {
+      findQuestionsByTitle: vi.fn().mockResolvedValue([]),
+      createQuestion: vi.fn().mockResolvedValue({ id: 101, title: 'Q1' }),
+      createMaterial: vi.fn().mockRejectedValue(new Error('Material API error')),
+    } as unknown as TrackApiClient;
+
+    try {
+      await publishToTrack(mockClient, mockMaterialDraft, mockQuestionPayloads, {
+        dryRun: false,
+        adoptExistingByTitle: false,
+      });
+      expect.fail('Should have thrown PartialPublishError');
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(PartialPublishError);
+      expect(e.originalError.message).toBe('Material API error');
+      expect(e.partialResult.trackQuestionIds).toEqual([101]);
+      expect(e.partialResult.materialAction).toBe('skipped');
+      expect(e.partialResult.trackMaterialId).toBeUndefined();
+    }
+  });
+
+  it('throws PartialPublishError when material release fails after material creation succeeds', async () => {
+    const mockClient = {
+      findQuestionsByTitle: vi.fn().mockResolvedValue([]),
+      createQuestion: vi.fn().mockResolvedValue({ id: 101, title: 'Q1' }),
+      createMaterial: vi.fn().mockResolvedValue({ id: 201, title: 'Test Material' }),
+      createRelease: vi.fn().mockRejectedValue(new Error('Release API error')),
+    } as unknown as TrackApiClient;
+
+    try {
+      await publishToTrack(mockClient, mockMaterialDraft, mockQuestionPayloads, {
+        dryRun: false,
+        adoptExistingByTitle: false,
+      });
+      expect.fail('Should have thrown PartialPublishError');
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(PartialPublishError);
+      expect(e.originalError.message).toBe('Release API error');
+      expect(e.partialResult.trackQuestionIds).toEqual([101]);
+      expect(e.partialResult.materialAction).toBe('created');
+      expect(e.partialResult.trackMaterialId).toBe(201);
+    }
   });
 });

@@ -118,9 +118,12 @@ export function updateTrackMapForPublish(options: {
   };
 
   options.questionPayloads.forEach((questionPayload, index) => {
+    const trackQuestionId = options.result.trackQuestionIds[index];
+    if (trackQuestionId === undefined) return;
+
     const questionKey = `${options.baseKey}/${options.questionKeys[index] ?? questionPayload.title}`;
     next.questions![questionKey] = {
-      track_question_id: options.result.trackQuestionIds[index] ?? 0,
+      track_question_id: trackQuestionId,
       title: questionPayload.title,
       source_hash: hashTrackPayload(questionPayload),
       updated_at: updatedAt,

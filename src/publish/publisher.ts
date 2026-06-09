@@ -7,6 +7,16 @@ import {
 } from '@metyatech/track-tcm-api-client';
 import type { TrackMaterialDraft } from '../types.js';
 
+export class PartialPublishError extends Error {
+  constructor(
+    public readonly originalError: unknown,
+    public readonly partialResult: PublishResult,
+  ) {
+    super(originalError instanceof Error ? originalError.message : String(originalError));
+    this.name = 'PartialPublishError';
+  }
+}
+
 export interface PublishResult {
   trackQuestionIds: number[];
   trackMaterialId?: number;
@@ -91,7 +101,8 @@ export async function publishToTrack(
     const questionPayload = questionsPayloads[index]!;
     const mappedId = mappedQuestionIds[index];
 
-    // Identity-based path: the track-map already maps this question to a Track
+    try {
+      // Identity-based path: the track-map already maps this question to a Track
     // question ID. Update by ID and never match or overwrite by title. This is
     // what prevents a same-title question from a different exam being clobbered.
     if (mappedId !== undefined) {
@@ -146,6 +157,13 @@ export async function publishToTrack(
       const created = await trackClient.createQuestion(questionPayload);
       publishedQuestionIds.push(created.id);
     }
+    } catch (error) {
+      if (error instanceof PartialPublishError) throw error;
+      throw new PartialPublishError(error, {
+        trackQuestionIds: publishedQuestionIds,
+        materialAction: 'skipped',
+      });
+    }
   }
 
   if (skipMaterial) {
@@ -159,6 +177,7 @@ export async function publishToTrack(
   const materialPayload = toTrackMaterialPayload(materialDraft, publishedQuestionIds);
   const mappedMaterialId = options.mappedMaterialId;
 
+  try {
   // Identity-based material path.
   if (mappedMaterialId !== undefined) {
     if (dryRun) {
@@ -216,6 +235,13 @@ export async function publishToTrack(
     };
   }
   return await createMaterialAndRelease(trackClient, materialPayload, publishedQuestionIds);
+  } catch (error) {
+    if (error instanceof PartialPublishError) throw error;
+    throw new PartialPublishError(error, {
+      trackQuestionIds: publishedQuestionIds,
+      materialAction: 'skipped',
+    });
+  }
 }
 
 function isTrackNotFoundError(error: unknown): boolean {
@@ -284,20 +310,28 @@ async function createMaterialAndRelease(
   const publishedMaterialId = created.id;
 
   console.log(`[PUBLISH] Releasing material: ${materialPayload.title}`);
-  const releasePayload: TrackReleasePayload = {
-    materialStyle: 1,
-    materialId: publishedMaterialId,
-    questionIds,
-    releaseNote: 'Initial assessment release',
-    skipReview: true,
-  };
+  try {
+    const releasePayload: TrackReleasePayload = {
+      materialStyle: 1,
+      materialId: publishedMaterialId,
+      questionIds,
+      releaseNote: 'Initial assessment release',
+      skipReview: true,
+    };
 
-  const release = await client.createRelease(releasePayload);
+    const release = await client.createRelease(releasePayload);
 
-  return {
-    trackQuestionIds: questionIds,
-    trackMaterialId: publishedMaterialId,
-    trackReleaseId: release.id,
-    materialAction: 'created',
-  };
+    return {
+      trackQuestionIds: questionIds,
+      trackMaterialId: publishedMaterialId,
+      trackReleaseId: release.id,
+      materialAction: 'created',
+    };
+  } catch (error) {
+    throw new PartialPublishError(error, {
+      trackQuestionIds: questionIds,
+      trackMaterialId: publishedMaterialId,
+      materialAction: 'created',
+    });
+  }
 }
