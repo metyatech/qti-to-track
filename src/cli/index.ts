@@ -12,7 +12,7 @@ import {
   type TrackMapTarget,
   updateTrackMapForPublish,
 } from '../publish/track-map.js';
-import { publishToTrack, toTrackMaterialPayload } from '../publish/publisher.js';
+import { publishToTrack, toTrackMaterialPayload, PartialPublishError, type PublishResult } from '../publish/publisher.js';
 import { loadSession } from './session.js';
 
 const program = new Command();
@@ -97,6 +97,7 @@ program
   .option('--recreate-missing', 'recreate Track questions/materials whose mapped track-map ID no longer exists on Track', false)
   .option('--upload-images', 'upload local images to Track API and replace paths with remote URLs', false)
   .action(async (options) => {
+    let persistTrackMap: ((result: PublishResult) => Promise<void>) | undefined;
     try {
       const hasTrackMapArg = process.argv.some((arg) => arg === '--track-map' || arg.startsWith('--track-map='));
       if (hasTrackMapArg && process.argv.includes('--no-track-map')) {
@@ -199,30 +200,34 @@ program
         },
       );
 
-      // 6. Update track-map
-      if (!isDryRun && useTrackMap) {
-        const materialPayload =
-          options.material === false || publishResult.trackMaterialId === undefined
-            ? undefined
-            : toTrackMaterialPayload(payload.materialDraft, publishResult.trackQuestionIds);
-        const updatedTrackMap = updateTrackMapForPublish({
-          trackMap,
-          target: { base_url: baseUrl, appspace: appspace! },
-          baseKey: 'qti',
-          questionKeys: parsedQti.items.map((item) => item.identifier),
-          materialKey,
-          legacyMaterialKey,
-          questionPayloads: payload.questions,
-          materialDraft: payload.materialDraft,
-          materialPayload,
-          result: publishResult,
-        });
+      persistTrackMap = async (publishResult: PublishResult) => {
+        if (!isDryRun && useTrackMap) {
+          const materialPayload =
+            options.material === false || publishResult.trackMaterialId === undefined
+              ? undefined
+              : toTrackMaterialPayload(payload.materialDraft, publishResult.trackQuestionIds);
+          const updatedTrackMap = updateTrackMapForPublish({
+            trackMap,
+            target: { base_url: baseUrl, appspace: appspace! },
+            baseKey: 'qti',
+            questionKeys: parsedQti.items.map((item) => item.identifier),
+            materialKey,
+            legacyMaterialKey,
+            questionPayloads: payload.questions,
+            materialDraft: payload.materialDraft,
+            materialPayload,
+            result: publishResult,
+          });
 
-        await saveTrackMap(trackMapPath!, updatedTrackMap);
-        if (!options.json) {
-          console.log(`Updated track-map at ${trackMapPath}`);
+          await saveTrackMap(trackMapPath!, updatedTrackMap);
+          if (!options.json) {
+            console.log(`Updated track-map at ${trackMapPath}`);
+          }
         }
-      }
+      };
+
+      // 6. Update track-map
+      await persistTrackMap(publishResult);
 
       if (options.json) {
         console.log(JSON.stringify({ dryRun: isDryRun, result: publishResult }, null, 2));
@@ -235,6 +240,19 @@ program
         }
       }
     } catch (e: any) {
+      if (e instanceof PartialPublishError) {
+        console.error(`\nError during publish: ${e.originalError instanceof Error ? e.originalError.message : String(e.originalError)}`);
+        console.error(`Attempting to save partial publish progress to track-map...`);
+        try {
+          // This ensures whatever was successfully published isn't orphaned
+          if (persistTrackMap) {
+            await persistTrackMap(e.partialResult);
+          }
+        } catch (saveError: any) {
+          console.error(`Failed to save partial track-map: ${saveError.message}`);
+        }
+        process.exit(1);
+      }
       console.error(`Error during publish: ${e.message}`);
       process.exit(1);
     }
