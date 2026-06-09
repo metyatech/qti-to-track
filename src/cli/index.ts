@@ -176,8 +176,11 @@ program
       const mappedQuestionIds = useTrackMap
         ? parsedQti.items.map((item) => trackMap.questions?.[`qti/${item.identifier}`]?.track_question_id)
         : undefined;
+      const materialKey = parsedQti.assessment.identifier;
+      const legacyMaterialKey = payload.materialDraft.title;
       const mappedMaterialId = useTrackMap
-        ? trackMap.materials?.[`qti/${payload.materialDraft.title}`]?.track_material_id
+        ? trackMap.materials?.[`qti/${materialKey}`]?.track_material_id ??
+          trackMap.materials?.[`qti/${legacyMaterialKey}`]?.track_material_id
         : undefined;
 
       // 5. Publish
@@ -207,6 +210,8 @@ program
           target: { base_url: baseUrl, appspace: appspace! },
           baseKey: 'qti',
           questionKeys: parsedQti.items.map((item) => item.identifier),
+          materialKey,
+          legacyMaterialKey,
           questionPayloads: payload.questions,
           materialDraft: payload.materialDraft,
           materialPayload,

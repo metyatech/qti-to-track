@@ -57,6 +57,7 @@ describe('track-map', () => {
       target: { base_url: 'https://tracks.dev', appspace: 'app' },
       baseKey: 'qti',
       questionKeys: ['q1'],
+      materialKey: 'assessment-id',
       questionPayloads: [
         {
           title: 'Q1',
@@ -101,7 +102,7 @@ describe('track-map', () => {
 
     expect(updated.questions?.['qti/q1']?.track_question_id).toBe(101);
     expect(updated.questions?.['qti/q1']?.source_hash).toMatch(/^sha256:/);
-    expect(updated.materials?.['qti/Material']).toMatchObject({
+    expect(updated.materials?.['qti/assessment-id']).toMatchObject({
       track_material_id: 201,
       title: 'Material',
       source_hash: expect.stringMatching(/^sha256:/),
@@ -127,6 +128,8 @@ describe('track-map', () => {
       target: { base_url: 'https://tracks.dev', appspace: 'app' },
       baseKey: 'qti',
       questionKeys: ['q1'],
+      materialKey: 'assessment-id',
+      legacyMaterialKey: 'Material',
       questionPayloads: [
         {
           title: 'Q1',
@@ -168,7 +171,76 @@ describe('track-map', () => {
       updatedAt: '2026-05-30T00:00:00.000Z',
     });
 
-    expect(updated.materials?.['qti/Material']?.release_id).toBe('rel-existing');
+    expect(updated.materials?.['qti/assessment-id']?.release_id).toBe('rel-existing');
+    expect(updated.materials?.['qti/Material']).toBeUndefined();
+  });
+
+  it('keeps updating the same material when the display title changes', () => {
+    const updated = updateTrackMapForPublish({
+      trackMap: {
+        version: 1,
+        materials: {
+          'qti/assessment-id': {
+            track_material_id: 201,
+            title: 'Old Title',
+            question_keys: ['qti/q1'],
+            source_hash: 'sha256:old',
+            updated_at: '2026-05-29T00:00:00.000Z',
+            release_id: 'rel-existing',
+          },
+        },
+      },
+      target: { base_url: 'https://tracks.dev', appspace: 'app' },
+      baseKey: 'qti',
+      questionKeys: ['q1'],
+      materialKey: 'assessment-id',
+      legacyMaterialKey: 'New Title',
+      questionPayloads: [
+        {
+          title: 'Q1',
+          questionKind: 1,
+          status: 2,
+          content: 'Pick',
+          howToSolve: '',
+          quizCategories: [99],
+          availableApps: ['training'],
+        },
+      ],
+      materialDraft: {
+        title: 'New Title',
+        style: 1,
+        status: 2,
+        language: 'ja',
+        basicTimeMinutes: 1,
+        difficulty: 1,
+        questionKeys: ['q1'],
+        materialTypes: ['others'],
+        availableApps: ['training'],
+      },
+      materialPayload: {
+        title: 'New Title',
+        style: 1,
+        status: 2,
+        language: 'ja',
+        basicTimeMinutes: 1,
+        difficulty: 1,
+        questionIds: [101],
+        materialTypes: ['others'],
+        availableApps: ['training'],
+      },
+      result: {
+        trackQuestionIds: [101],
+        trackMaterialId: 201,
+        materialAction: 'updated',
+      },
+      updatedAt: '2026-05-30T00:00:00.000Z',
+    });
+
+    expect(updated.materials?.['qti/assessment-id']).toMatchObject({
+      track_material_id: 201,
+      title: 'New Title',
+      release_id: 'rel-existing',
+    });
   });
 
   it('omits material entry when material is skipped', () => {
@@ -177,6 +249,7 @@ describe('track-map', () => {
       target: { base_url: 'https://tracks.dev', appspace: 'app' },
       baseKey: 'qti',
       questionKeys: ['q1'],
+      materialKey: 'assessment-id',
       questionPayloads: [
         {
           title: 'Q1',

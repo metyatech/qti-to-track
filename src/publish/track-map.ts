@@ -101,6 +101,8 @@ export function updateTrackMapForPublish(options: {
   target: TrackMapTarget;
   baseKey: string;
   questionKeys: string[];
+  materialKey: string;
+  legacyMaterialKey?: string;
   questionPayloads: TrackQuestionPayload[];
   materialDraft: TrackMaterialDraft;
   materialPayload?: TrackMaterialPayload;
@@ -131,8 +133,13 @@ export function updateTrackMapForPublish(options: {
     options.materialPayload
   ) {
     next.materials = { ...(next.materials ?? {}) };
-    const materialKey = `${options.baseKey}/${options.materialDraft.title}`;
-    const previousReleaseId = options.trackMap.materials?.[materialKey]?.release_id;
+    const materialKey = `${options.baseKey}/${options.materialKey}`;
+    const legacyMaterialKey = options.legacyMaterialKey === undefined
+      ? undefined
+      : `${options.baseKey}/${options.legacyMaterialKey}`;
+    const previousReleaseId =
+      options.trackMap.materials?.[materialKey]?.release_id ??
+      (legacyMaterialKey === undefined ? undefined : options.trackMap.materials?.[legacyMaterialKey]?.release_id);
     next.materials[materialKey] = {
       track_material_id: options.result.trackMaterialId,
       title: options.materialDraft.title,
@@ -141,6 +148,9 @@ export function updateTrackMapForPublish(options: {
       updated_at: updatedAt,
       release_id: options.result.trackReleaseId ?? previousReleaseId,
     };
+    if (legacyMaterialKey !== undefined && legacyMaterialKey !== materialKey) {
+      delete next.materials[legacyMaterialKey];
+    }
   }
 
   if (Object.keys(next.questions ?? {}).length === 0) {

@@ -82,11 +82,11 @@ Publishes the parsed QTI package directly to Track LMS. Creates questions, bundl
 
 #### Update identity is the track-map, not the title
 
-When `--track-map` is used, re-publishing updates the **same Track records by ID**. Each question is keyed by its stable QTI identifier (`qti/<identifier>`), and the material by its title key, so a previously published question is updated through its stored `track_question_id` regardless of its title. A question that is not yet in the track-map is **created** as a new Track question; a plain publish never searches by title and never overwrites an unrelated Track question that happens to share a title.
+When `--track-map` is used, re-publishing updates the **same Track records by ID**. Each question is keyed by its stable QTI item identifier (`qti/<identifier>`), and the material is keyed by the stable QTI assessment identifier (`qti/<assessment-identifier>`), so previously published questions and materials are updated through their stored Track IDs regardless of their display titles. A question or material that is not yet in the track-map is **created** as a new Track record; a plain publish never searches by title and never overwrites an unrelated Track record that happens to share a title.
 
 If a mapped `track_question_id` (or `track_material_id`) no longer exists on Track (for example it was deleted in the Track UI), publish fails with an explicit error so a stale mapping cannot silently create or clobber the wrong record. Re-run with `--recreate-missing` to recreate those records and refresh the track-map.
 
-Title-based matching is opt-in and only applies to questions that are **not** in the track-map: `--adopt-existing-by-title` adopts and updates an existing same-title Track record (use it to bootstrap a track-map from records published before track-map support), and `--check-existing` fails closed when a same-title record already exists.
+Title-based matching is opt-in and only applies to questions/materials that are **not** in the track-map: `--adopt-existing-by-title` adopts and updates an existing same-title Track record (use it to bootstrap a track-map from records published before track-map support), and `--check-existing` fails closed when a same-title record already exists.
 
 Credentials can be provided by CLI options, environment variables, a saved session file, or a Track map target. **After `weekly-quiz-workbench track-login`, `qti-to-track publish` can use the default saved session without a manual `--session` flag.** Appspace and base URL resolution order is CLI flags, `TRACK_TCM_*` environment variables, the saved session, then `--track-map` `target`. Credential resolution prefers CLI `--authorization` / `--cookie`, then `TRACK_TCM_AUTHORIZATION` / `TRACK_TCM_COOKIE`, then the saved session. The session loader supports `weekly-quiz-workbench track-login` session files that store cookies in `cookieHeader`, as well as legacy `cookie` and nested credential fields.
 
@@ -126,7 +126,9 @@ When `--upload-images` is used, qti-to-track reads each local image's original d
 
 ## Track-map compatibility
 
-When `--track-map` is used, the publish command creates or updates a `track-map.yaml` mapping file compatible with `@metyatech/weekly-quiz-workbench`. It stores Track IDs, updated timestamps, and stable hashes of API payload JSON so duplicate questions can be tracked between executions. Dry-runs do not write the track-map. `--no-track-map` disables all track-map reads and writes. When `--no-material` is used, no material entry is written.
+When `--track-map` is used, the publish command creates or updates a `track-map.yaml` mapping file compatible with `@metyatech/weekly-quiz-workbench`. It stores Track IDs, updated timestamps, and stable hashes of API payload JSON so duplicate questions and materials can be tracked between executions by stable source identifiers instead of mutable display titles. Dry-runs do not write the track-map. `--no-track-map` disables all track-map reads and writes. When `--no-material` is used, no material entry is written.
+
+Older track maps may contain material entries keyed by title, such as `qti/Final Exam`. On the next successful publish, qti-to-track reads that legacy key as a fallback, updates the existing `track_material_id`, and rewrites the entry under the stable assessment key.
 
 Example structure:
 ```yaml
@@ -135,7 +137,7 @@ target:
   base_url: https://tracks.dev
   appspace: appspace-id
 materials:
-  qti/imsqti_test:
+  qti/assessment_identifier:
     track_material_id: 123
     title: Final Exam
     question_keys:
