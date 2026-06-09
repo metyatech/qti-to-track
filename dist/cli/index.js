@@ -75,6 +75,7 @@ program
     .option('--json', 'print JSON output of the result', false)
     .option('--adopt-existing-by-title', 'update existing questions/materials with matching titles', false)
     .option('--check-existing', 'perform duplicate checks during dry-run; requires Track credentials', false)
+    .option('--recreate-missing', 'recreate Track questions/materials whose mapped track-map ID no longer exists on Track', false)
     .option('--upload-images', 'upload local images to Track API and replace paths with remote URLs', false)
     .action(async (options) => {
     try {
@@ -140,12 +141,24 @@ program
             const { uploadImagesAndReplaceUrls } = await import('../generator/image-uploader.js');
             payload.questions = await uploadImagesAndReplaceUrls(payload.questions, options.qtiDir, apiClient);
         }
+        // Resolve identity-based update targets from the track-map. Questions are
+        // keyed by their stable QTI identifier (qti/<identifier>), so re-publishing
+        // updates the same Track record by ID regardless of its title.
+        const mappedQuestionIds = useTrackMap
+            ? parsedQti.items.map((item) => trackMap.questions?.[`qti/${item.identifier}`]?.track_question_id)
+            : undefined;
+        const mappedMaterialId = useTrackMap
+            ? trackMap.materials?.[`qti/${payload.materialDraft.title}`]?.track_material_id
+            : undefined;
         // 5. Publish
         const publishResult = await publishToTrack(apiClient, payload.materialDraft, payload.questions, {
             dryRun: isDryRun,
             adoptExistingByTitle: options.adoptExistingByTitle,
             checkExisting: options.checkExisting,
             skipMaterial: options.material === false,
+            recreateMissing: options.recreateMissing,
+            mappedQuestionIds,
+            mappedMaterialId,
         });
         // 6. Update track-map
         if (!isDryRun && useTrackMap) {

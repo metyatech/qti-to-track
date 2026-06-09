@@ -66,16 +66,135 @@ describe('publishToTrack', () => {
     expect(mockClient.createRelease).toHaveBeenCalled();
   });
 
-  it('fails when duplicate question exists and adopt-existing is false', async () => {
+  it('creates a new question on a plain real publish and never overwrites an unrelated same-title question', async () => {
     const mockClient = {
-      findQuestionsByTitle: vi.fn().mockResolvedValue([{ id: 101, title: 'Q1' }]),
+      findQuestionsByTitle: vi.fn().mockResolvedValue([{ id: 999, title: 'Q1' }]),
+      createQuestion: vi.fn().mockResolvedValue({ id: 102, title: 'Q1' }),
+      updateQuestion: vi.fn(),
+      findMaterialsByTitle: vi.fn().mockResolvedValue([{ id: 888, title: 'Test Material' }]),
+      createMaterial: vi.fn().mockResolvedValue({ id: 202, title: 'Test Material' }),
+      createRelease: vi.fn().mockResolvedValue({ id: 'rel-x' }),
+      updateMaterial: vi.fn(),
+    } as unknown as TrackApiClient;
+
+    const result = await publishToTrack(mockClient, mockMaterialDraft, mockQuestionPayloads, {
+      dryRun: false,
+      adoptExistingByTitle: false,
+    });
+
+    expect(result.trackQuestionIds).toEqual([102]);
+    expect(mockClient.createQuestion).toHaveBeenCalledWith(mockQuestionPayloads[0]);
+    expect(mockClient.updateQuestion).not.toHaveBeenCalled();
+    expect(mockClient.updateMaterial).not.toHaveBeenCalled();
+    // A plain publish must not perform any title-based lookup.
+    expect(mockClient.findQuestionsByTitle).not.toHaveBeenCalled();
+    expect(mockClient.findMaterialsByTitle).not.toHaveBeenCalled();
+  });
+
+  it('updates a mapped question and material by ID without any title lookup', async () => {
+    const mockClient = {
+      findQuestionsByTitle: vi.fn(),
+      findMaterialsByTitle: vi.fn(),
+      updateQuestion: vi.fn().mockResolvedValue({ id: 101, title: 'Q1' }),
+      updateMaterial: vi.fn().mockResolvedValue({ id: 201, title: 'Test Material' }),
+      createQuestion: vi.fn(),
+      createMaterial: vi.fn(),
+      createRelease: vi.fn(),
+    } as unknown as TrackApiClient;
+
+    const result = await publishToTrack(mockClient, mockMaterialDraft, mockQuestionPayloads, {
+      dryRun: false,
+      adoptExistingByTitle: false,
+      mappedQuestionIds: [101],
+      mappedMaterialId: 201,
+    });
+
+    expect(result.trackQuestionIds).toEqual([101]);
+    expect(result.trackMaterialId).toBe(201);
+    expect(result.materialAction).toBe('updated');
+    expect(mockClient.updateQuestion).toHaveBeenCalledWith(101, mockQuestionPayloads[0]);
+    expect(mockClient.updateMaterial).toHaveBeenCalledWith(1, 201, {
+      ...mockMaterialPayload,
+      questionIds: [101],
+    });
+    expect(mockClient.findQuestionsByTitle).not.toHaveBeenCalled();
+    expect(mockClient.findMaterialsByTitle).not.toHaveBeenCalled();
+    expect(mockClient.createQuestion).not.toHaveBeenCalled();
+    expect(mockClient.createMaterial).not.toHaveBeenCalled();
+    expect(mockClient.createRelease).not.toHaveBeenCalled();
+  });
+
+  it('reports mapped-ID updates during dry run without touching Track', async () => {
+    const result = await publishToTrack(undefined, mockMaterialDraft, mockQuestionPayloads, {
+      dryRun: true,
+      adoptExistingByTitle: false,
+      mappedQuestionIds: [101],
+      mappedMaterialId: 201,
+    });
+
+    expect(result.trackQuestionIds).toEqual([101]);
+    expect(result.trackMaterialId).toBe(201);
+    expect(result.materialAction).toBe('dry-run');
+  });
+
+  it('fails when a mapped question ID is missing and recreateMissing is false', async () => {
+    const mockClient = {
+      updateQuestion: vi.fn().mockRejectedValue(
+        new Error('Track API PUT https://tracks.dev/api/questions/101 failed: 404 Not Found'),
+      ),
+      createQuestion: vi.fn(),
     } as unknown as TrackApiClient;
 
     await expect(publishToTrack(mockClient, mockMaterialDraft, mockQuestionPayloads, {
       dryRun: false,
       adoptExistingByTitle: false,
+      mappedQuestionIds: [101],
     }))
-      .rejects.toThrow(/Duplicate question found/);
+      .rejects.toThrow(/was not found on Track[\s\S]*--recreate-missing/);
+    expect(mockClient.createQuestion).not.toHaveBeenCalled();
+  });
+
+  it('recreates a missing mapped question when recreateMissing is true', async () => {
+    const mockClient = {
+      updateQuestion: vi.fn().mockRejectedValue(
+        new Error('Track API PUT https://tracks.dev/api/questions/101 failed: 404 Not Found'),
+      ),
+      createQuestion: vi.fn().mockResolvedValue({ id: 303, title: 'Q1' }),
+      updateMaterial: vi.fn().mockResolvedValue({ id: 201, title: 'Test Material' }),
+    } as unknown as TrackApiClient;
+
+    const result = await publishToTrack(mockClient, mockMaterialDraft, mockQuestionPayloads, {
+      dryRun: false,
+      adoptExistingByTitle: false,
+      recreateMissing: true,
+      mappedQuestionIds: [101],
+      mappedMaterialId: 201,
+    });
+
+    expect(result.trackQuestionIds).toEqual([303]);
+    expect(mockClient.createQuestion).toHaveBeenCalledWith(mockQuestionPayloads[0]);
+    expect(mockClient.updateMaterial).toHaveBeenCalledWith(1, 201, {
+      ...mockMaterialPayload,
+      questionIds: [303],
+    });
+  });
+
+  it('rethrows non-404 errors when updating a mapped question', async () => {
+    const mockClient = {
+      updateQuestion: vi.fn().mockRejectedValue(
+        new Error('Track API PUT https://tracks.dev/api/questions/101 failed: 500 Server Error'),
+      ),
+      createQuestion: vi.fn(),
+    } as unknown as TrackApiClient;
+
+    await expect(publishToTrack(mockClient, mockMaterialDraft, mockQuestionPayloads, {
+      dryRun: false,
+      adoptExistingByTitle: false,
+      recreateMissing: true,
+      mappedQuestionIds: [101],
+    }))
+      .rejects.toThrow(/failed: 500/);
+    expect(mockClient.createQuestion).not.toHaveBeenCalled();
   });
 
   it('adopts existing items when adopt-existing is true', async () => {

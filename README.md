@@ -80,6 +80,14 @@ The output directory is created automatically if it doesn't exist. The output is
 
 Publishes the parsed QTI package directly to Track LMS. Creates questions, bundles them into a material, and releases the material unless `--no-material` is used.
 
+#### Update identity is the track-map, not the title
+
+When `--track-map` is used, re-publishing updates the **same Track records by ID**. Each question is keyed by its stable QTI identifier (`qti/<identifier>`), and the material by its title key, so a previously published question is updated through its stored `track_question_id` regardless of its title. A question that is not yet in the track-map is **created** as a new Track question; a plain publish never searches by title and never overwrites an unrelated Track question that happens to share a title.
+
+If a mapped `track_question_id` (or `track_material_id`) no longer exists on Track (for example it was deleted in the Track UI), publish fails with an explicit error so a stale mapping cannot silently create or clobber the wrong record. Re-run with `--recreate-missing` to recreate those records and refresh the track-map.
+
+Title-based matching is opt-in and only applies to questions that are **not** in the track-map: `--adopt-existing-by-title` adopts and updates an existing same-title Track record (use it to bootstrap a track-map from records published before track-map support), and `--check-existing` fails closed when a same-title record already exists.
+
 Credentials can be provided by CLI options, environment variables, a saved session file, or a Track map target. **After `weekly-quiz-workbench track-login`, `qti-to-track publish` can use the default saved session without a manual `--session` flag.** Appspace and base URL resolution order is CLI flags, `TRACK_TCM_*` environment variables, the saved session, then `--track-map` `target`. Credential resolution prefers CLI `--authorization` / `--cookie`, then `TRACK_TCM_AUTHORIZATION` / `TRACK_TCM_COOKIE`, then the saved session. The session loader supports `weekly-quiz-workbench track-login` session files that store cookies in `cookieHeader`, as well as legacy `cookie` and nested credential fields.
 
 When `--track-map` contains a `target`, qti-to-track fails before API use if CLI flags, environment variables, or the selected session point at a different appspace or base URL. This prevents accidentally publishing to a different Track appspace than the committed map records.
@@ -105,13 +113,14 @@ qti-to-track publish --qti-dir ./my-qti-package --yes --track-map ./track-map.ya
 | `--material-title <title>` | no | Override QTI assessment title for the Track material |
 | `--material-type <type>` | no | Track material type (default: `others`) |
 | `--no-material` | no | Publish questions only; skip material creation and release |
-| `--adopt-existing-by-title` | no | Adopt matching existing questions/materials by exact title and update them during real publish |
-| `--check-existing` | no | Check exact-title duplicates and fail closed if any are found; also runs during dry-run and requires Track credentials |
+| `--adopt-existing-by-title` | no | For track-map-unmapped items only: adopt a matching existing question/material by exact title and update it during real publish (bootstrap aid). Off by default |
+| `--check-existing` | no | For track-map-unmapped items only: check exact-title duplicates and fail closed if any are found; also runs during dry-run and requires Track credentials |
+| `--recreate-missing` | no | Recreate a Track question/material whose mapped track-map ID no longer exists on Track, instead of failing. Off by default |
 | `--upload-images` | no | Upload local images to Track API and replace paths |
 | `--base-url <url>` | no | Track base URL (default: https://tracks.dev) |
 | `--json` | no | Print result as JSON |
 
-Dry-run behavior: without `--yes`, QTI parsing and payload generation run without Track credentials. Credentials are required in dry-run only when an option needs the Track API, such as `--upload-images`, `--adopt-existing-by-title`, or `--check-existing`. `--check-existing` performs Track API duplicate lookups even in dry-run and fails closed on exact-title question or material duplicates. `--adopt-existing-by-title` is different: matching titles are treated as update targets instead of duplicates, and real publish updates those existing Track records. Real publish without `--adopt-existing-by-title` also fails closed on exact-title duplicates.
+Dry-run behavior: without `--yes`, QTI parsing and payload generation run without Track credentials. A plain dry-run reports, per question, whether it would update a track-map-mapped record by ID or create a new one. Credentials are required in dry-run only when an option needs the Track API, such as `--upload-images`, `--adopt-existing-by-title`, or `--check-existing`. `--check-existing` performs Track API title-duplicate lookups (for unmapped items) even in dry-run and fails closed on exact-title question or material duplicates. `--adopt-existing-by-title` instead treats a matching title as an update target for an unmapped item, and real publish updates that existing Track record. A plain real publish (no title flags) updates mapped items by ID and creates unmapped items; it performs no title lookup and never overwrites by title.
 
 When `--upload-images` is used, qti-to-track reads each local image's original dimensions and sends them to the Track upload-signature API. If a local image's dimensions cannot be determined, publish fails instead of leaving a local path in Track content.
 
