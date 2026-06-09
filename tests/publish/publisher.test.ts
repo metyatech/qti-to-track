@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { publishToTrack, toTrackMaterialPayload } from '../../src/publish/publisher.js';
-import type { TrackApiClient, TrackMaterialPayload, TrackQuestionPayload } from '@metyatech/track-tcm-api-client';
+import { TrackApiError, type TrackApiClient, type TrackMaterialPayload, type TrackQuestionPayload } from '@metyatech/track-tcm-api-client';
 import type { TrackMaterialDraft } from '../../src/types.js';
 
 describe('publishToTrack', () => {
@@ -39,6 +39,17 @@ describe('publishToTrack', () => {
       availableApps: ['training']
     }
   ];
+
+  function missingTrackApiError(url: string): TrackApiError {
+    return new TrackApiError({
+      method: 'PUT',
+      url,
+      status: 404,
+      statusText: 'Not Found',
+      responseBody: '<h1>Not Found</h1>',
+      apiMessage: 'Not Found',
+    });
+  }
 
   it('creates new items when not dry-run and no duplicates exist', async () => {
     const mockClient = {
@@ -140,7 +151,7 @@ describe('publishToTrack', () => {
   it('fails when a mapped question ID is missing and recreateMissing is false', async () => {
     const mockClient = {
       updateQuestion: vi.fn().mockRejectedValue(
-        new Error('Track API PUT https://tracks.dev/api/questions/101 failed: 404 Not Found'),
+        missingTrackApiError('https://tracks.dev/api/questions/101'),
       ),
       createQuestion: vi.fn(),
     } as unknown as TrackApiClient;
@@ -157,7 +168,7 @@ describe('publishToTrack', () => {
   it('recreates a missing mapped question when recreateMissing is true', async () => {
     const mockClient = {
       updateQuestion: vi.fn().mockRejectedValue(
-        new Error('Track API PUT https://tracks.dev/api/questions/101 failed: 404 Not Found'),
+        missingTrackApiError('https://tracks.dev/api/questions/101'),
       ),
       createQuestion: vi.fn().mockResolvedValue({ id: 303, title: 'Q1' }),
       updateMaterial: vi.fn().mockResolvedValue({ id: 201, title: 'Test Material' }),

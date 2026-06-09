@@ -1,4 +1,10 @@
-import { TrackApiClient, TrackQuestionPayload, TrackMaterialPayload, TrackReleasePayload } from '@metyatech/track-tcm-api-client';
+import {
+  TrackApiError,
+  type TrackApiClient,
+  type TrackQuestionPayload,
+  type TrackMaterialPayload,
+  type TrackReleasePayload,
+} from '@metyatech/track-tcm-api-client';
 import type { TrackMaterialDraft } from '../types.js';
 
 export interface PublishResult {
@@ -212,16 +218,8 @@ export async function publishToTrack(
   return await createMaterialAndRelease(trackClient, materialPayload, publishedQuestionIds);
 }
 
-/**
- * Detects a Track "not found" (HTTP 404) failure. The Track API client throws a
- * plain Error with the status embedded in the message (e.g.
- * `Track API PUT .../questions/123 failed: 404 ...`); it exposes no structured
- * status. This is the only available signal because the client has no
- * get-by-id / existence method. Tracked follow-up: add a typed status to
- * @metyatech/track-tcm-api-client and match on that instead of the message.
- */
 function isTrackNotFoundError(error: unknown): boolean {
-  return error instanceof Error && /failed:\s*404\b/.test(error.message);
+  return error instanceof TrackApiError && error.status === 404;
 }
 
 async function updateOrRecreateQuestion(
