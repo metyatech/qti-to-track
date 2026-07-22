@@ -173,6 +173,35 @@ result.textContent = &quot;変更後&quot;;
     ]);
   });
 
+  it('preserves QTI and HTML anchors as Markdown links', () => {
+    const itemXml = `
+      <qti-assessment-item identifier="ITEM-LINKS" title="Demo Links">
+        <qti-item-body>
+          <qti-p>前の文章 <qti-a href="https://example.com/demo/">完成見本を開く</qti-a> 後の文章</qti-p>
+          <qti-p><a href="https://example.com/docs/">通常のリンク</a></qti-p>
+          <qti-p><qti-a href="https://example.com/rich/">リンク内の<qti-strong>強調</qti-strong>と<qti-code>code</qti-code></qti-a></qti-p>
+          <qti-p><qti-a>hrefなし</qti-a></qti-p>
+          <qti-p><qti-a href="https://course-exam-demos.vercel.app/f21f43d1df7547c4/">完成見本を開く</qti-a></qti-p>
+          <qti-extended-text-interaction response-identifier="RESPONSE" />
+        </qti-item-body>
+      </qti-assessment-item>
+    `;
+
+    const parsed = parseAssessmentItemXml(itemXml);
+
+    expect(parsed.prompt).toBe([
+      '前の文章 [完成見本を開く](https://example.com/demo/) 後の文章',
+      '',
+      '[通常のリンク](https://example.com/docs/)',
+      '',
+      '[リンク内の**強調**と`code`](https://example.com/rich/)',
+      '',
+      'hrefなし',
+      '',
+      '[完成見本を開く](https://course-exam-demos.vercel.app/f21f43d1df7547c4/)',
+    ].join('\n'));
+  });
+
   it('parses text-entry and extended-text interaction types', () => {
     const textEntryXml = `
       <assessmentItem identifier="ITEM-TE" title="Fill Blank">

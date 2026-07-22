@@ -80,6 +80,36 @@ describe('integration: markdown-to-qti fixtures', () => {
     ].join('\n'));
   });
 
+  it('keeps exam demo URLs in generated Track question payloads', () => {
+    const demoUrl = 'https://course-exam-demos.vercel.app/f21f43d1df7547c4/';
+    const assessmentXml = `
+      <qti-assessment-test identifier="demo-assessment" title="Demo Assessment">
+        <qti-test-part identifier="test-part">
+          <qti-assessment-section identifier="section">
+            <qti-assessment-item-ref identifier="demo-question" href="demo-question.qti.xml" />
+          </qti-assessment-section>
+        </qti-test-part>
+      </qti-assessment-test>
+    `;
+    const itemXml = `
+      <qti-assessment-item identifier="demo-question" title="Demo Question">
+        <qti-item-body>
+          <qti-p><qti-a href="${demoUrl}">完成見本を開く</qti-a></qti-p>
+          <qti-extended-text-interaction response-identifier="RESPONSE" />
+        </qti-item-body>
+      </qti-assessment-item>
+    `;
+
+    const parsed = parseQtiPackageFromXml({
+      assessmentXml,
+      itemXmlByIdentifier: { 'demo-question': itemXml },
+    });
+    const payload = toTrackPayloads(parsed);
+
+    expect(parsed.items[0]?.prompt).toBe(`[完成見本を開く](${demoUrl})`);
+    expect(payload.questions[0]?.content).toBe(`[完成見本を開く](${demoUrl})`);
+  });
+
   it('rounds material basicTimeMinutes up from fixture section time limit', async () => {
     const parsed = await loadQtiPackage(fixtureDir);
     const payload = toTrackPayloads(parsed);

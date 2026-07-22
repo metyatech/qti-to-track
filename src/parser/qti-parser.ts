@@ -489,6 +489,11 @@ function renderOrderedMarkdownInlineNode(
   }
 
   switch (element.name) {
+    case 'a': {
+      const label = renderOrderedMarkdownInline(element.children, context);
+      const href = readStringAttribute(element.attrs, '@_href');
+      return href === undefined || href.length === 0 ? label : `[${label}](${href})`;
+    }
     case 'br':
       return '\n';
     case 'code':
