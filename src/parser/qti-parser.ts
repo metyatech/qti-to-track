@@ -28,6 +28,22 @@ interface MarkdownRenderContext {
   responseIdentifiers: string[];
 }
 
+interface MarkdownInlineRenderOptions {
+  lineBreak?: string;
+}
+
+type MarkdownTableAlignment = 'left' | 'center' | 'right';
+
+interface MarkdownTableCell {
+  content: string;
+  alignment?: MarkdownTableAlignment;
+}
+
+interface MarkdownTableRow {
+  cells: MarkdownTableCell[];
+  header: boolean;
+}
+
 const preserveOrderXmlParser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
@@ -55,6 +71,13 @@ const BLOCK_ELEMENT_NAMES = new Set([
   'blockquote',
   'contentBody',
   'div',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'hr',
   'li',
   'ol',
   'p',
@@ -426,12 +449,25 @@ function renderOrderedMarkdownBlock(
     case 'div':
     case 'rubricBlock':
       return renderOrderedMarkdownBlocks(element.children, context);
+    case 'h1':
+    case 'h2':
+    case 'h3':
+    case 'h4':
+    case 'h5':
+    case 'h6': {
+      const level = Number(element.name.slice(1));
+      return `${'#'.repeat(level)} ${renderOrderedMarkdownInline(element.children, context)}`;
+    }
+    case 'hr':
+      return '---';
     case 'ol':
       return renderOrderedMarkdownList(element.children, context, true);
     case 'p':
       return renderOrderedMarkdownInline(element.children, context);
     case 'pre':
       return renderCodeFence(renderOrderedPreText(element.children, context));
+    case 'table':
+      return renderOrderedMarkdownTable(element, context);
     case 'ul':
       return renderOrderedMarkdownList(element.children, context, false);
     default:
@@ -440,6 +476,207 @@ function renderOrderedMarkdownBlock(
       }
       return renderOrderedMarkdownInline(element.children, context);
   }
+}
+
+function renderOrderedMarkdownTable(
+  table: OrderedElement,
+  context: MarkdownRenderContext,
+): string {
+  const rows: MarkdownTableRow[] = [];
+
+  for (const node of table.children) {
+    const element = getOrderedElement(node);
+    if (element === undefined) {
+      continue;
+    }
+
+    if (element.name === 'thead' || element.name === 'tbody' || element.name === 'tfoot') {
+      const sectionIsHeader = element.name === 'thead';
+      for (const row of findOrderedChildElements(element.children, 'tr')) {
+        rows.push(renderOrderedMarkdownTableRow(row, context, sectionIsHeader));
+      }
+      continue;
+    }
+
+    if (element.name === 'tr') {
+      rows.push(renderOrderedMarkdownTableRow(element, context, false));
+    }
+  }
+
+  const nonEmptyRows = rows.filter((row) => row.cells.length > 0);
+  const columnCount = Math.max(0, ...nonEmptyRows.map((row) => row.cells.length));
+  if (columnCount === 0) {
+    return '';
+  }
+
+  const headerIndex = nonEmptyRows.findIndex((row) => row.header);
+  const headerRow = headerIndex >= 0
+    ? nonEmptyRows[headerIndex]!
+    : { cells: [], header: true };
+  const bodyRows = nonEmptyRows.filter((_, index) => index !== headerIndex);
+  const paddedHeaderCells = padMarkdownTableCells(headerRow.cells, columnCount);
+  const paddedBodyRows = bodyRows.map((row) => padMarkdownTableCells(row.cells, columnCount));
+  const alignments = Array.from({ length: columnCount }, (_, columnIndex) =>
+    resolveMarkdownTableColumnAlignment(
+      [paddedHeaderCells, ...paddedBodyRows],
+      columnIndex,
+    ),
+  );
+
+  return [
+    formatMarkdownTableRow(paddedHeaderCells.map((cell) => cell.content)),
+    formatMarkdownTableRow(alignments.map(formatMarkdownTableAlignment)),
+    ...paddedBodyRows.map((cells) => formatMarkdownTableRow(cells.map((cell) => cell.content))),
+  ].join('\n');
+}
+
+function renderOrderedMarkdownTableRow(
+  row: OrderedElement,
+  context: MarkdownRenderContext,
+  sectionIsHeader: boolean,
+): MarkdownTableRow {
+  const cellElements = row.children
+    .map((node) => getOrderedElement(node))
+    .filter((element): element is OrderedElement => element?.name === 'th' || element?.name === 'td');
+
+  return {
+    cells: cellElements.map((cell) => renderOrderedMarkdownTableCell(cell, context)),
+    header: sectionIsHeader || cellElements.some((cell) => cell.name === 'th'),
+  };
+}
+
+function renderOrderedMarkdownTableCell(
+  cell: OrderedElement,
+  context: MarkdownRenderContext,
+): MarkdownTableCell {
+  assertSupportedMarkdownTableCellSpan(cell);
+
+  return {
+    content: normalizeMarkdownTableCell(renderOrderedMarkdownTableCellContent(cell.children, context)),
+    alignment: readMarkdownTableAlignment(cell.attrs),
+  };
+}
+
+function assertSupportedMarkdownTableCellSpan(cell: OrderedElement): void {
+  for (const attribute of ['@_colspan', '@_rowspan']) {
+    const value = readStringAttribute(cell.attrs, attribute);
+    if (value !== undefined && value !== '1') {
+      throw new Error(
+        `Cannot safely convert QTI table cell with ${attribute.slice(2)}="${value}" to Markdown.`,
+      );
+    }
+  }
+}
+
+function renderOrderedMarkdownTableCellContent(
+  nodes: readonly XmlRecord[],
+  context: MarkdownRenderContext,
+): string {
+  const chunks: string[] = [];
+
+  for (const node of nodes) {
+    const text = getOrderedText(node);
+    if (text !== undefined) {
+      chunks.push(text);
+      continue;
+    }
+
+    const element = getOrderedElement(node);
+    if (element === undefined) {
+      continue;
+    }
+
+    if (element.name === 'p') {
+      chunks.push('<br>', renderOrderedMarkdownInline(element.children, context, { lineBreak: '<br>' }), '<br>');
+      continue;
+    }
+
+    if (element.name === 'contentBody' || element.name === 'div') {
+      chunks.push('<br>', renderOrderedMarkdownTableCellContent(element.children, context), '<br>');
+      continue;
+    }
+
+    if (element.name === 'pre') {
+      chunks.push('<br>', formatInlineCode(renderOrderedPreText(element.children, context)), '<br>');
+      continue;
+    }
+
+    if (BLOCK_ELEMENT_NAMES.has(element.name)) {
+      chunks.push(
+        '<br>',
+        renderOrderedMarkdownBlock(node, context).replace(/\r?\n+/gu, '<br>'),
+        '<br>',
+      );
+      continue;
+    }
+
+    chunks.push(renderOrderedMarkdownInlineNode(node, context, { lineBreak: '<br>' }));
+  }
+
+  return chunks.join('');
+}
+
+function readMarkdownTableAlignment(attrs: XmlRecord): MarkdownTableAlignment | undefined {
+  const style = readStringAttribute(attrs, '@_style');
+  const match = style?.match(/(?:^|;)\s*text-align\s*:\s*(left|center|right)\b/iu);
+  return match?.[1]?.toLowerCase() as MarkdownTableAlignment | undefined;
+}
+
+function normalizeMarkdownTableCell(value: string): string {
+  return value
+    .replace(/\s+/gu, ' ')
+    .replace(/\s*<br>\s*/gu, '<br>')
+    .replace(/(?:<br>){2,}/gu, '<br>')
+    .replace(/^(?:<br>)+|(?:<br>)+$/gu, '')
+    .trim()
+    .replace(/(?<!\\)\|/gu, '\\|');
+}
+
+function padMarkdownTableCells(
+  cells: readonly MarkdownTableCell[],
+  columnCount: number,
+): MarkdownTableCell[] {
+  return Array.from({ length: columnCount }, (_, index) => cells[index] ?? { content: '' });
+}
+
+function resolveMarkdownTableColumnAlignment(
+  rows: readonly MarkdownTableCell[][],
+  columnIndex: number,
+): MarkdownTableAlignment | undefined {
+  const alignments = [
+    ...new Set(
+      rows
+        .map((cells) => cells[columnIndex]?.alignment)
+        .filter((alignment): alignment is MarkdownTableAlignment => alignment !== undefined),
+    ),
+  ];
+
+  if (alignments.length > 1) {
+    throw new Error(
+      `Cannot safely convert conflicting QTI table alignments in column ${String(columnIndex + 1)} to Markdown.`,
+    );
+  }
+
+  return alignments[0];
+}
+
+function formatMarkdownTableAlignment(
+  alignment: MarkdownTableAlignment | undefined,
+): string {
+  switch (alignment) {
+    case 'left':
+      return ':---';
+    case 'center':
+      return ':---:';
+    case 'right':
+      return '---:';
+    default:
+      return '---';
+  }
+}
+
+function formatMarkdownTableRow(cells: readonly string[]): string {
+  return `| ${cells.join(' | ')} |`;
 }
 
 function renderOrderedMarkdownList(
@@ -468,15 +705,17 @@ function renderOrderedMarkdownList(
 function renderOrderedMarkdownInline(
   nodes: readonly XmlRecord[],
   context: MarkdownRenderContext,
+  options: MarkdownInlineRenderOptions = {},
 ): string {
   return normalizeInlineMarkdown(
-    nodes.map((node) => renderOrderedMarkdownInlineNode(node, context)).join(''),
+    nodes.map((node) => renderOrderedMarkdownInlineNode(node, context, options)).join(''),
   );
 }
 
 function renderOrderedMarkdownInlineNode(
   node: XmlRecord,
   context: MarkdownRenderContext,
+  options: MarkdownInlineRenderOptions = {},
 ): string {
   const text = getOrderedText(node);
   if (text !== undefined) {
@@ -490,17 +729,19 @@ function renderOrderedMarkdownInlineNode(
 
   switch (element.name) {
     case 'a': {
-      const label = renderOrderedMarkdownInline(element.children, context);
+      const label = renderOrderedMarkdownInline(element.children, context, options);
       const href = readStringAttribute(element.attrs, '@_href');
       return href === undefined || href.length === 0 ? label : `[${label}](${href})`;
     }
     case 'br':
-      return '\n';
+      return options.lineBreak ?? '\n';
     case 'code':
       return formatInlineCode(rawOrderedText(element.children));
+    case 'del':
+      return `~~${renderOrderedMarkdownInline(element.children, context, options)}~~`;
     case 'em':
     case 'i':
-      return `*${renderOrderedMarkdownInline(element.children, context)}*`;
+      return `*${renderOrderedMarkdownInline(element.children, context, options)}*`;
     case 'img': {
       const src = readStringAttribute(element.attrs, '@_src') ?? '';
       const alt = readStringAttribute(element.attrs, '@_alt') ?? '';
@@ -508,11 +749,11 @@ function renderOrderedMarkdownInlineNode(
     }
     case 'strong':
     case 'b':
-      return `**${renderOrderedMarkdownInline(element.children, context)}**`;
+      return `**${renderOrderedMarkdownInline(element.children, context, options)}**`;
     case 'textEntryInteraction':
       return renderTextEntryPlaceholder(element, context);
     default:
-      return renderOrderedMarkdownInline(element.children, context);
+      return renderOrderedMarkdownInline(element.children, context, options);
   }
 }
 

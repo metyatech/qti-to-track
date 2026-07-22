@@ -6,13 +6,13 @@ Converts a QTI XML package into Track API JSON payloads, and can publish them di
 
 `qti-to-track` reads a QTI 3.0 package directory (assessment XML plus item XML files), parses it, and produces structured Track draft JSON. It can also directly publish those questions, create a Track material from the resulting Track question IDs, and release the material.
 
-**This repo does not parse Markdown.** The only Markdown parser/compiler in this pipeline is [`markdown-to-qti`](https://github.com/metyatech/markdown-to-qti). The expected workflow is:
+**This repo does not parse source Markdown.** The only Markdown parser/compiler in this pipeline is [`markdown-to-qti`](https://github.com/metyatech/markdown-to-qti). The expected workflow is:
 
 ```
 Markdown    markdown-to-qti    QTI package    qti-to-track    Track payloads / Track LMS
 ```
 
-`qti-to-track` takes over at the QTI package step. It knows nothing about Markdown.
+`qti-to-track` takes over at the QTI package step. It serializes QTI presentation elements into the Markdown fields accepted by Track, preserving headings, paragraphs, blockquotes, lists, code, emphasis, strikethrough, links, images, horizontal rules, and tables. Table column alignment is derived from `text-align` styles. Cell line breaks are represented with `<br>`, table delimiters are escaped, and unsupported row or column spans fail explicitly instead of producing a corrupted table.
 
 ## Requirements
 

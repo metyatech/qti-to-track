@@ -202,6 +202,132 @@ result.textContent = &quot;変更後&quot;;
     ].join('\n'));
   });
 
+  it('preserves Markdown structure for headings, rich inline content, lists, rules, and tables', () => {
+    const itemXml = `
+      <qti-assessment-item identifier="ITEM-MARKDOWN" title="Markdown Structure">
+        <qti-item-body>
+          <qti-h3>小見出し</qti-h3>
+          <qti-p><qti-strong>太字</qti-strong>、<qti-em>斜体</qti-em>、<qti-del>取り消し線</qti-del>、<qti-code>コード</qti-code>、<qti-a href="https://example.com">リンク</qti-a></qti-p>
+          <qti-blockquote><qti-p>引用</qti-p></qti-blockquote>
+          <qti-ul><qti-li><qti-p>箇条書き</qti-p></qti-li></qti-ul>
+          <qti-ol><qti-li><qti-p>番号付きリスト</qti-p></qti-li></qti-ol>
+          <qti-hr />
+          <qti-table>
+            <qti-thead>
+              <qti-tr>
+                <qti-th style="text-align: left;">左</qti-th>
+                <qti-th style="text-align: center;">中央</qti-th>
+                <qti-th style="text-align: right;">右</qti-th>
+              </qti-tr>
+            </qti-thead>
+            <qti-tbody>
+              <qti-tr><qti-td>A</qti-td><qti-td>B</qti-td><qti-td>C</qti-td></qti-tr>
+              <qti-tr><qti-td><qti-code>code</qti-code></qti-td><qti-td><qti-strong>太字</qti-strong></qti-td><qti-td><qti-a href="https://example.com">リンク</qti-a></qti-td></qti-tr>
+            </qti-tbody>
+          </qti-table>
+          <qti-extended-text-interaction response-identifier="RESPONSE" />
+        </qti-item-body>
+      </qti-assessment-item>
+    `;
+
+    const parsed = parseAssessmentItemXml(itemXml);
+
+    expect(parsed.prompt).toBe([
+      '### 小見出し',
+      '',
+      '**太字**、*斜体*、~~取り消し線~~、`コード`、[リンク](https://example.com)',
+      '',
+      '> 引用',
+      '',
+      '- 箇条書き',
+      '',
+      '1. 番号付きリスト',
+      '',
+      '---',
+      '',
+      '| 左 | 中央 | 右 |',
+      '| :--- | :---: | ---: |',
+      '| A | B | C |',
+      '| `code` | **太字** | [リンク](https://example.com) |',
+    ].join('\n'));
+  });
+
+  it('preserves all Markdown heading levels', () => {
+    const itemXml = `
+      <qti-assessment-item identifier="ITEM-HEADINGS" title="Headings">
+        <qti-item-body>
+          <qti-h1>見出し1</qti-h1>
+          <qti-h2>見出し2</qti-h2>
+          <qti-h3>見出し3</qti-h3>
+          <qti-h4>見出し4</qti-h4>
+          <qti-h5>見出し5</qti-h5>
+          <qti-h6>見出し6</qti-h6>
+          <qti-extended-text-interaction response-identifier="RESPONSE" />
+        </qti-item-body>
+      </qti-assessment-item>
+    `;
+
+    const parsed = parseAssessmentItemXml(itemXml);
+
+    expect(parsed.prompt).toBe([
+      '# 見出し1',
+      '',
+      '## 見出し2',
+      '',
+      '### 見出し3',
+      '',
+      '#### 見出し4',
+      '',
+      '##### 見出し5',
+      '',
+      '###### 見出し6',
+    ].join('\n'));
+  });
+
+  it('escapes table delimiters, preserves cell line breaks, empty cells, and default alignment', () => {
+    const itemXml = `
+      <qti-assessment-item identifier="ITEM-TABLE-SAFETY" title="Table Safety">
+        <qti-item-body>
+          <qti-table>
+            <qti-thead>
+              <qti-tr><qti-th>区切り</qti-th><qti-th>改行</qti-th><qti-th>空</qti-th><qti-th>装飾</qti-th></qti-tr>
+            </qti-thead>
+            <qti-tbody>
+              <qti-tr><qti-td>A | B</qti-td><qti-td>1行目<qti-br />2行目</qti-td><qti-td></qti-td><qti-td><qti-em>斜体</qti-em></qti-td></qti-tr>
+            </qti-tbody>
+          </qti-table>
+          <qti-extended-text-interaction response-identifier="RESPONSE" />
+        </qti-item-body>
+      </qti-assessment-item>
+    `;
+
+    const parsed = parseAssessmentItemXml(itemXml);
+
+    expect(parsed.prompt).toBe([
+      '| 区切り | 改行 | 空 | 装飾 |',
+      '| --- | --- | --- | --- |',
+      '| A \\| B | 1行目<br>2行目 |  | *斜体* |',
+    ].join('\n'));
+  });
+
+  it('rejects table spans that Markdown cannot safely preserve', () => {
+    const itemXml = `
+      <qti-assessment-item identifier="ITEM-TABLE-SPAN" title="Table Span">
+        <qti-item-body>
+          <qti-table>
+            <qti-thead><qti-tr><qti-th colspan="2">結合見出し</qti-th></qti-tr></qti-thead>
+            <qti-tbody><qti-tr><qti-td>A</qti-td><qti-td>B</qti-td></qti-tr></qti-tbody>
+          </qti-table>
+          <qti-extended-text-interaction response-identifier="RESPONSE" />
+        </qti-item-body>
+      </qti-assessment-item>
+    `;
+
+    expect(() => parseAssessmentItemXml(itemXml)).toThrow(
+      'Cannot safely convert QTI table cell with colspan="2" to Markdown.',
+    );
+  });
+
   it('parses text-entry and extended-text interaction types', () => {
     const textEntryXml = `
       <assessmentItem identifier="ITEM-TE" title="Fill Blank">

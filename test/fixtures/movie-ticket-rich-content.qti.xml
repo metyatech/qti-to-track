@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<qti-assessment-item
+    xmlns="http://www.imsglobal.org/xsd/imsqti_v3p0"
+    identifier="movie-ticket-calculator"
+    title="JavaScript応用Ⅰ 前期期末試験 対策問題：映画チケット料金計算アプリ"
+    adaptive="false"
+    time-dependent="false">
+  <qti-response-declaration identifier="RESPONSE" cardinality="single" base-type="string"/>
+  <qti-item-body>
+    <qti-h3>完成見本</qti-h3>
+    <qti-p><qti-a href="https://course-exam-demos.vercel.app/f21f43d1df7547c4/">完成見本を開く</qti-a></qti-p>
+    <qti-p>完成見本のソースコードを確認・利用することは禁止します。</qti-p>
+    <qti-h3>完成させる機能</qti-h3>
+    <qti-ol>
+      <qti-li><qti-p>ページを開いたとき、3種類の映画名と基本価格を一覧表示する。</qti-p></qti-li>
+      <qti-li><qti-p>選択した映画に応じて、結果欄に <qti-code>action</qti-code> クラスを付ける。</qti-p></qti-li>
+    </qti-ol>
+    <qti-h3>料金</qti-h3>
+    <qti-table>
+      <qti-thead>
+        <qti-tr><qti-th>項目</qti-th><qti-th style="text-align: right;">料金</qti-th></qti-tr>
+      </qti-thead>
+      <qti-tbody>
+        <qti-tr><qti-td>アクション映画</qti-td><qti-td style="text-align: right;">1600円</qti-td></qti-tr>
+        <qti-tr><qti-td>アニメ映画</qti-td><qti-td style="text-align: right;">1500円</qti-td></qti-tr>
+      </qti-tbody>
+    </qti-table>
+    <qti-h3>動作確認の例</qti-h3>
+    <qti-table>
+      <qti-thead>
+        <qti-tr><qti-th>選択内容</qti-th><qti-th>表示内容</qti-th><qti-th style="text-align: right;">合計金額</qti-th><qti-th>結果欄のクラス</qti-th></qti-tr>
+      </qti-thead>
+      <qti-tbody>
+        <qti-tr><qti-td>アクション映画、一般席、追加商品なし</qti-td><qti-td>アクション映画（一般席）／追加商品なし</qti-td><qti-td style="text-align: right;">1600円</qti-td><qti-td><qti-code>result-box action</qti-code></qti-td></qti-tr>
+      </qti-tbody>
+    </qti-table>
+    <qti-extended-text-interaction response-identifier="RESPONSE"/>
+  </qti-item-body>
+</qti-assessment-item>

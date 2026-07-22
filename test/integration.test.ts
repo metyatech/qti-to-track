@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadQtiPackage, parseQtiPackageFromXml, toTrackPayloads } from '../src/index.js';
@@ -6,6 +7,7 @@ import { toTrackMaterialPayload } from '../src/publish/publisher.js';
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const fixtureDir = resolve(testDir, 'fixtures/markdown-to-qti');
+const movieTicketRichContentFixture = resolve(testDir, 'fixtures/movie-ticket-rich-content.qti.xml');
 
 function buildChoiceItemXml(identifier: string, maxTime: string): string {
   return `
@@ -108,6 +110,39 @@ describe('integration: markdown-to-qti fixtures', () => {
 
     expect(parsed.items[0]?.prompt).toBe(`[完成見本を開く](${demoUrl})`);
     expect(payload.questions[0]?.content).toBe(`[完成見本を開く](${demoUrl})`);
+  });
+
+  it('keeps movie ticket prompt structure in parsed QTI and Track payload content', async () => {
+    const itemXml = await readFile(movieTicketRichContentFixture, 'utf8');
+    const assessmentXml = `
+      <qti-assessment-test identifier="movie-ticket-assessment" title="Movie Ticket Assessment">
+        <qti-test-part identifier="test-part">
+          <qti-assessment-section identifier="section">
+            <qti-assessment-item-ref identifier="movie-ticket-calculator" href="movie-ticket-calculator.qti.xml" />
+          </qti-assessment-section>
+        </qti-test-part>
+      </qti-assessment-test>
+    `;
+
+    const parsed = parseQtiPackageFromXml({
+      assessmentXml,
+      itemXmlByIdentifier: { 'movie-ticket-calculator': itemXml },
+    });
+    const payload = toTrackPayloads(parsed);
+    const prompt = parsed.items[0]?.prompt ?? '';
+
+    expect(prompt).toContain('### 完成見本');
+    expect(prompt).toContain('### 完成させる機能');
+    expect(prompt).toContain('### 料金');
+    expect(prompt).toContain('### 動作確認の例');
+    expect(prompt).toContain('| 項目 | 料金 |');
+    expect(prompt).toContain('| --- | ---: |');
+    expect(prompt).toContain('| 選択内容 | 表示内容 | 合計金額 | 結果欄のクラス |');
+    expect(prompt).toContain('| --- | --- | ---: | --- |');
+    expect(prompt).toContain('[完成見本を開く](https://course-exam-demos.vercel.app/f21f43d1df7547c4/)');
+    expect(prompt).toContain('1. ページを開いたとき、3種類の映画名と基本価格を一覧表示する。');
+    expect(prompt).toContain('`result-box action`');
+    expect(payload.questions[0]?.content).toBe(prompt);
   });
 
   it('rounds material basicTimeMinutes up from fixture section time limit', async () => {
