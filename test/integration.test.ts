@@ -112,7 +112,7 @@ describe('integration: markdown-to-qti fixtures', () => {
     expect(payload.questions[0]?.content).toBe(`[完成見本を開く](${demoUrl})`);
   });
 
-  it('keeps movie ticket prompt structure in parsed QTI and Track payload content', async () => {
+  it('keeps movie ticket prompt structure and emits Track-safe payload headings', async () => {
     const itemXml = await readFile(movieTicketRichContentFixture, 'utf8');
     const assessmentXml = `
       <qti-assessment-test identifier="movie-ticket-assessment" title="Movie Ticket Assessment">
@@ -142,7 +142,63 @@ describe('integration: markdown-to-qti fixtures', () => {
     expect(prompt).toContain('[完成見本を開く](https://course-exam-demos.vercel.app/f21f43d1df7547c4/)');
     expect(prompt).toContain('1. ページを開いたとき、3種類の映画名と基本価格を一覧表示する。');
     expect(prompt).toContain('`result-box action`');
-    expect(payload.questions[0]?.content).toBe(prompt);
+    expect(payload.questions[0]?.content).toContain('<h3>完成見本</h3>');
+    expect(payload.questions[0]?.content).toContain('<h3>完成させる機能</h3>');
+    expect(payload.questions[0]?.content).toContain('<h3>料金</h3>');
+    expect(payload.questions[0]?.content).toContain('<h3>動作確認の例</h3>');
+    expect(payload.questions[0]?.content).not.toContain('### 完成見本');
+    expect(payload.questions[0]?.content).toContain('| 項目 | 料金 |');
+    expect(payload.questions[0]?.content).toContain('| --- | ---: |');
+  });
+
+  it('encodes QTI headings as Track-safe HTML without altering fenced code or feedback structure', () => {
+    const assessmentXml = `
+      <qti-assessment-test identifier="heading-assessment" title="Heading Assessment">
+        <qti-test-part identifier="test-part">
+          <qti-assessment-section identifier="section">
+            <qti-assessment-item-ref identifier="heading-question" href="heading-question.qti.xml" />
+          </qti-assessment-section>
+        </qti-test-part>
+      </qti-assessment-test>
+    `;
+    const itemXml = `
+      <qti-assessment-item identifier="heading-question" title="Heading Question">
+        <qti-item-body>
+          <qti-h1>見出し1</qti-h1>
+          <qti-h2>見出し2</qti-h2>
+          <qti-h3>見出し3</qti-h3>
+          <qti-h4>見出し4</qti-h4>
+          <qti-h5>見出し5</qti-h5>
+          <qti-h6>見出し6</qti-h6>
+          <qti-pre><qti-code>### コード内の見出し記号</qti-code></qti-pre>
+          <qti-extended-text-interaction response-identifier="RESPONSE" />
+        </qti-item-body>
+        <qti-modal-feedback identifier="EXPLANATION" outcome-identifier="FEEDBACK" show-hide="show">
+          <qti-h3>解説見出し</qti-h3>
+          <qti-table>
+            <qti-thead><qti-tr><qti-th>項目</qti-th><qti-th>値</qti-th></qti-tr></qti-thead>
+            <qti-tbody><qti-tr><qti-td>A</qti-td><qti-td>B</qti-td></qti-tr></qti-tbody>
+          </qti-table>
+        </qti-modal-feedback>
+      </qti-assessment-item>
+    `;
+
+    const parsed = parseQtiPackageFromXml({
+      assessmentXml,
+      itemXmlByIdentifier: { 'heading-question': itemXml },
+    });
+    const question = toTrackPayloads(parsed).questions[0];
+
+    expect(parsed.items[0]?.prompt).toContain('### 見出し3');
+    expect(question?.content).toContain('<h1>見出し1</h1>');
+    expect(question?.content).toContain('<h2>見出し2</h2>');
+    expect(question?.content).toContain('<h3>見出し3</h3>');
+    expect(question?.content).toContain('<h4>見出し4</h4>');
+    expect(question?.content).toContain('<h5>見出し5</h5>');
+    expect(question?.content).toContain('<h6>見出し6</h6>');
+    expect(question?.content).toContain('```\n### コード内の見出し記号\n```');
+    expect(question?.howToSolve).toContain('<h3>解説見出し</h3>');
+    expect(question?.howToSolve).toContain('| 項目 | 値 |');
   });
 
   it('rounds material basicTimeMinutes up from fixture section time limit', async () => {

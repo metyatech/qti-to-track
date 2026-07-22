@@ -12,6 +12,11 @@ import type {
 
 const DEFAULT_ITEM_TIME_LIMIT_SECONDS = 60;
 
+interface MarkdownFence {
+  character: '`' | '~';
+  length: number;
+}
+
 function isPositiveFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
@@ -62,6 +67,44 @@ function ensureClozePlaceholders(content: string, blanks: ParsedQtiItem['blanks'
 
   const placeholders = blanks.map(toPlaceholder).join(' ');
   return content.length > 0 ? `${content}\n${placeholders}` : placeholders;
+}
+
+function toTrackSafeRichText(markdown: string): string {
+  let fence: MarkdownFence | undefined;
+
+  return markdown
+    .split('\n')
+    .map((line) => {
+      const fenceMatch = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
+      if (fenceMatch !== null) {
+        const marker = fenceMatch[1] as string;
+        const character = marker[0] as MarkdownFence['character'];
+        if (fence === undefined) {
+          fence = { character, length: marker.length };
+        } else if (
+          character === fence.character
+          && marker.length >= fence.length
+          && (fenceMatch[2] as string).trim().length === 0
+        ) {
+          fence = undefined;
+        }
+        return line;
+      }
+
+      if (fence !== undefined) {
+        return line;
+      }
+
+      const headingMatch = /^ {0,3}(#{1,6})(?:[ \t]+|$)(.*)$/u.exec(line);
+      if (headingMatch === null) {
+        return line;
+      }
+
+      const level = (headingMatch[1] as string).length;
+      const content = (headingMatch[2] as string).replace(/[ \t]+#+[ \t]*$/u, '').trimEnd();
+      return `<h${String(level)}>${content}</h${String(level)}>`;
+    })
+    .join('\n');
 }
 
 function formatMaxScore(maxScore: number): string {
@@ -120,9 +163,11 @@ function estimateMaterialTimeLimitSeconds(parsed: ParsedQtiPackage): number {
 
 function toQuestionPayload(item: ParsedQtiItem): TrackQuestionPayload {
   const content = appendScoringFooter(
-    item.interactionType === 'text-entry'
-      ? ensureClozePlaceholders(item.prompt, item.blanks)
-      : item.prompt,
+    toTrackSafeRichText(
+      item.interactionType === 'text-entry'
+        ? ensureClozePlaceholders(item.prompt, item.blanks)
+        : item.prompt,
+    ),
     item,
   );
   const basePayload: TrackQuestionPayload = {
@@ -130,7 +175,7 @@ function toQuestionPayload(item: ParsedQtiItem): TrackQuestionPayload {
     questionKind: toQuestionKind(item),
     status: 2,
     content,
-    howToSolve: item.feedback.join('\n').trim(),
+    howToSolve: toTrackSafeRichText(item.feedback.join('\n').trim()),
     quizCategories: [99],
     availableApps: ['training'],
   };
