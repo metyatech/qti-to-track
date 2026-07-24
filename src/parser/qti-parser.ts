@@ -734,7 +734,7 @@ function renderOrderedMarkdownInlineNode(
       return href === undefined || href.length === 0 ? label : `[${label}](${href})`;
     }
     case 'br':
-      return options.lineBreak ?? '\n';
+      return options.lineBreak ?? '<br>';
     case 'code':
       return formatInlineCode(rawOrderedText(element.children));
     case 'del':
@@ -855,7 +855,7 @@ function hasBlockElement(nodes: readonly XmlRecord[]): boolean {
 }
 
 function normalizeInlineMarkdown(value: string): string {
-  return value.replace(/\s+/gu, ' ').trim();
+  return value.replace(/\s+/gu, ' ').replace(/\s*<br>\s*/gu, '<br>').trim();
 }
 
 function extractPromptFromXml(

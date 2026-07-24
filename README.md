@@ -12,7 +12,7 @@ Converts a QTI XML package into Track API JSON payloads, and can publish them di
 Markdown    markdown-to-qti    QTI package    qti-to-track    Track payloads / Track LMS
 ```
 
-`qti-to-track` takes over at the QTI package step. It serializes QTI presentation elements into rich text for Track, preserving headings, paragraphs, blockquotes, lists, code, emphasis, strikethrough, links, images, horizontal rules, and tables. Parsed QTI keeps headings as Markdown; Track payloads encode those headings with Track's supported `h1`-`h6` HTML elements because Track's API compiler reserves Markdown heading lines for its own question subsections. Table column alignment is derived from `text-align` styles. Cell line breaks are represented with `<br>`, table delimiters are escaped, and unsupported row or column spans fail explicitly instead of producing a corrupted table.
+`qti-to-track` takes over at the QTI package step. It serializes QTI presentation elements into rich text for Track, preserving headings, paragraphs, blockquotes, lists, code, emphasis, strikethrough, links, images, horizontal rules, and tables. Parsed QTI keeps headings as Markdown; Track payloads encode those headings with Track's supported `h1`-`h6` HTML elements because Track's API compiler reserves Markdown heading lines for its own question subsections. Table column alignment is derived from `text-align` styles. Inline QTI `br` elements in question bodies, choices, feedback, rubrics, and table cells are represented with `<br>`; ordinary XML formatting whitespace and newlines remain ordinary spaces. Table delimiters are escaped, and unsupported row or column spans fail explicitly instead of producing a corrupted table.
 
 ## Requirements
 

@@ -82,6 +82,48 @@ describe('integration: markdown-to-qti fixtures', () => {
     ].join('\n'));
   });
 
+  it('preserves QTI inline line breaks in Track question payloads', () => {
+    const assessmentXml = `
+      <assessmentTest identifier="inline-br-assessment" title="Inline Line Breaks">
+        <testPart identifier="test-part">
+          <assessmentSection identifier="section">
+            <assessmentItemRef identifier="inline-br-question" href="inline-br-question.qti.xml" />
+          </assessmentSection>
+        </testPart>
+      </assessmentTest>
+    `;
+    const itemXml = `
+      <assessmentItem identifier="inline-br-question" title="Inline Line Breaks">
+        <responseDeclaration identifier="RESPONSE" cardinality="single" base-type="identifier">
+          <correctResponse>
+            <value>CHOICE_1</value>
+          </correctResponse>
+        </responseDeclaration>
+        <itemBody>
+          <p>本文1<qti-br/>本文2</p>
+          <choiceInteraction responseIdentifier="RESPONSE" maxChoices="1">
+            <simpleChoice identifier="CHOICE_1">選択肢1<qti-br/>選択肢2</simpleChoice>
+          </choiceInteraction>
+        </itemBody>
+        <modalFeedback identifier="EXPLANATION" outcomeIdentifier="FEEDBACK" showHide="show">
+          <contentBody>
+            <p>解説1<qti-br/>解説2</p>
+          </contentBody>
+        </modalFeedback>
+      </assessmentItem>
+    `;
+
+    const parsed = parseQtiPackageFromXml({
+      assessmentXml,
+      itemXmlByIdentifier: { 'inline-br-question': itemXml },
+    });
+    const question = toTrackPayloads(parsed).questions[0];
+
+    expect(question?.content).toContain('本文1<br>本文2');
+    expect(question?.choices).toEqual([{ content: '選択肢1<br>選択肢2', correct: true }]);
+    expect(question?.howToSolve).toContain('解説1<br>解説2');
+  });
+
   it('keeps exam demo URLs in generated Track question payloads', () => {
     const demoUrl = 'https://course-exam-demos.vercel.app/f21f43d1df7547c4/';
     const assessmentXml = `

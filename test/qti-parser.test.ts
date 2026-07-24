@@ -88,6 +88,38 @@ describe('qti-parser', () => {
     expect(parsed.feedback).toEqual(['Correct: Paris']);
   });
 
+  it('preserves QTI inline line breaks while normalizing ordinary XML whitespace', () => {
+    const itemXml = `
+      <qti-assessment-item identifier="ITEM-BR" title="Inline Line Breaks">
+        <qti-response-declaration identifier="RESPONSE" cardinality="single" base-type="identifier">
+          <qti-correct-response>
+            <qti-value>CHOICE_1</qti-value>
+          </qti-correct-response>
+        </qti-response-declaration>
+        <qti-item-body>
+          <qti-p>本文1<qti-br/>本文2
+            soft line</qti-p>
+          <qti-choice-interaction response-identifier="RESPONSE" max-choices="1">
+            <qti-simple-choice identifier="CHOICE_1">選択肢1<qti-br/>選択肢2</qti-simple-choice>
+          </qti-choice-interaction>
+        </qti-item-body>
+        <qti-assessment-item:rubricBlock xmlns:qti-assessment-item="http://www.imsglobal.org/xsd/imsqti_v2p1" view="scorer"><qti-p>基準1<qti-br/>基準2</qti-p></qti-assessment-item:rubricBlock>
+        <qti-modal-feedback identifier="EXPLANATION" outcome-identifier="FEEDBACK" show-hide="show">
+          <qti-content-body>
+            <qti-p>解説1<qti-br/>解説2</qti-p>
+          </qti-content-body>
+        </qti-modal-feedback>
+      </qti-assessment-item>
+    `;
+
+    const parsed = parseAssessmentItemXml(itemXml);
+
+    expect(parsed.prompt).toBe('本文1<br>本文2 soft line');
+    expect(parsed.choices).toEqual([{ identifier: 'CHOICE_1', text: '選択肢1<br>選択肢2' }]);
+    expect(parsed.feedback).toEqual(['解説1<br>解説2']);
+    expect(parsed.scorerRubric).toEqual(['基準1<br>基準2']);
+  });
+
   it('preserves QTI rich content as Markdown for Track payload fields', () => {
     const itemXml = `
       <qti-assessment-item identifier="ITEM-RICH" title="DOM Error">
