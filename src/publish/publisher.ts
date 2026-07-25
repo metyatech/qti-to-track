@@ -7,6 +7,9 @@ import {
 } from '@metyatech/track-tcm-api-client';
 import type { TrackMaterialDraft } from '../types.js';
 
+const INITIAL_RELEASE_NOTE = 'Initial assessment release';
+const UPDATED_RELEASE_NOTE = 'Updated assessment release';
+
 export class PartialPublishError extends Error {
   constructor(
     public readonly originalError: unknown,
@@ -228,11 +231,13 @@ export async function publishToTrack(
   const trackClient = requireClient(client, 'publish material');
   if (existingMaterialId !== undefined) {
     await trackClient.updateMaterial(1, existingMaterialId, materialPayload);
-    return {
-      trackQuestionIds: publishedQuestionIds,
-      trackMaterialId: existingMaterialId,
-      materialAction: 'updated',
-    };
+    return await releaseMaterial(
+      trackClient,
+      existingMaterialId,
+      publishedQuestionIds,
+      'updated',
+      UPDATED_RELEASE_NOTE,
+    );
   }
   return await createMaterialAndRelease(trackClient, materialPayload, publishedQuestionIds);
   } catch (error) {
@@ -281,11 +286,7 @@ async function updateOrRecreateMaterial(
 ): Promise<PublishResult> {
   try {
     await client.updateMaterial(1, mappedId, materialPayload);
-    return {
-      trackQuestionIds: questionIds,
-      trackMaterialId: mappedId,
-      materialAction: 'updated',
-    };
+    return await releaseMaterial(client, mappedId, questionIds, 'updated', UPDATED_RELEASE_NOTE);
   } catch (error) {
     if (!isTrackNotFoundError(error)) {
       throw error;
@@ -309,13 +310,29 @@ async function createMaterialAndRelease(
   const created = await client.createMaterial(materialPayload);
   const publishedMaterialId = created.id;
 
-  console.log(`[PUBLISH] Releasing material: ${materialPayload.title}`);
+  return await releaseMaterial(
+    client,
+    publishedMaterialId,
+    questionIds,
+    'created',
+    INITIAL_RELEASE_NOTE,
+  );
+}
+
+async function releaseMaterial(
+  client: TrackApiClient,
+  materialId: number,
+  questionIds: number[],
+  materialAction: 'created' | 'updated',
+  releaseNote: string,
+): Promise<PublishResult> {
+  console.log(`[PUBLISH] Releasing material ID: ${materialId}`);
   try {
     const releasePayload: TrackReleasePayload = {
       materialStyle: 1,
-      materialId: publishedMaterialId,
+      materialId,
       questionIds,
-      releaseNote: 'Initial assessment release',
+      releaseNote,
       skipReview: true,
     };
 
@@ -323,15 +340,15 @@ async function createMaterialAndRelease(
 
     return {
       trackQuestionIds: questionIds,
-      trackMaterialId: publishedMaterialId,
+      trackMaterialId: materialId,
       trackReleaseId: release.id,
-      materialAction: 'created',
+      materialAction,
     };
   } catch (error) {
     throw new PartialPublishError(error, {
       trackQuestionIds: questionIds,
-      trackMaterialId: publishedMaterialId,
-      materialAction: 'created',
+      trackMaterialId: materialId,
+      materialAction,
     });
   }
 }

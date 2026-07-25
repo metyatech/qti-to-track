@@ -74,7 +74,13 @@ describe('publishToTrack', () => {
       ...mockMaterialPayload,
       questionIds: [101]
     });
-    expect(mockClient.createRelease).toHaveBeenCalled();
+    expect(mockClient.createRelease).toHaveBeenCalledWith({
+      materialStyle: 1,
+      materialId: 201,
+      questionIds: [101],
+      releaseNote: 'Initial assessment release',
+      skipReview: true,
+    });
   });
 
   it('creates a new question on a plain real publish and never overwrites an unrelated same-title question', async () => {
@@ -110,7 +116,7 @@ describe('publishToTrack', () => {
       updateMaterial: vi.fn().mockResolvedValue({ id: 201, title: 'Test Material' }),
       createQuestion: vi.fn(),
       createMaterial: vi.fn(),
-      createRelease: vi.fn(),
+      createRelease: vi.fn().mockResolvedValue({ id: 'rel-updated' }),
     } as unknown as TrackApiClient;
 
     const result = await publishToTrack(mockClient, mockMaterialDraft, mockQuestionPayloads, {
@@ -122,6 +128,7 @@ describe('publishToTrack', () => {
 
     expect(result.trackQuestionIds).toEqual([101]);
     expect(result.trackMaterialId).toBe(201);
+    expect(result.trackReleaseId).toBe('rel-updated');
     expect(result.materialAction).toBe('updated');
     expect(mockClient.updateQuestion).toHaveBeenCalledWith(101, mockQuestionPayloads[0]);
     expect(mockClient.updateMaterial).toHaveBeenCalledWith(1, 201, {
@@ -132,7 +139,13 @@ describe('publishToTrack', () => {
     expect(mockClient.findMaterialsByTitle).not.toHaveBeenCalled();
     expect(mockClient.createQuestion).not.toHaveBeenCalled();
     expect(mockClient.createMaterial).not.toHaveBeenCalled();
-    expect(mockClient.createRelease).not.toHaveBeenCalled();
+    expect(mockClient.createRelease).toHaveBeenCalledWith({
+      materialStyle: 1,
+      materialId: 201,
+      questionIds: [101],
+      releaseNote: 'Updated assessment release',
+      skipReview: true,
+    });
   });
 
   it('reports mapped-ID updates during dry run without touching Track', async () => {
@@ -172,6 +185,7 @@ describe('publishToTrack', () => {
       ),
       createQuestion: vi.fn().mockResolvedValue({ id: 303, title: 'Q1' }),
       updateMaterial: vi.fn().mockResolvedValue({ id: 201, title: 'Test Material' }),
+      createRelease: vi.fn().mockResolvedValue({ id: 'rel-recreated-question' }),
     } as unknown as TrackApiClient;
 
     const result = await publishToTrack(mockClient, mockMaterialDraft, mockQuestionPayloads, {
@@ -187,6 +201,13 @@ describe('publishToTrack', () => {
     expect(mockClient.updateMaterial).toHaveBeenCalledWith(1, 201, {
       ...mockMaterialPayload,
       questionIds: [303],
+    });
+    expect(mockClient.createRelease).toHaveBeenCalledWith({
+      materialStyle: 1,
+      materialId: 201,
+      questionIds: [303],
+      releaseNote: 'Updated assessment release',
+      skipReview: true,
     });
   });
 
@@ -214,6 +235,7 @@ describe('publishToTrack', () => {
       updateQuestion: vi.fn().mockResolvedValue({ id: 101, title: 'Q1' }),
       findMaterialsByTitle: vi.fn().mockResolvedValue([{ id: 201, title: 'Test Material' }]),
       updateMaterial: vi.fn().mockResolvedValue({ id: 201, title: 'Test Material' }),
+      createRelease: vi.fn().mockResolvedValue({ id: 'rel-adopted' }),
     } as unknown as TrackApiClient;
 
     const result = await publishToTrack(mockClient, mockMaterialDraft, mockQuestionPayloads, {
@@ -223,12 +245,19 @@ describe('publishToTrack', () => {
 
     expect(result.trackQuestionIds).toEqual([101]);
     expect(result.trackMaterialId).toBe(201);
-    expect(result.trackReleaseId).toBeUndefined(); // Adopting doesn't create release
+    expect(result.trackReleaseId).toBe('rel-adopted');
 
     expect(mockClient.updateQuestion).toHaveBeenCalledWith(101, mockQuestionPayloads[0]);
     expect(mockClient.updateMaterial).toHaveBeenCalledWith(1, 201, {
       ...mockMaterialPayload,
       questionIds: [101]
+    });
+    expect(mockClient.createRelease).toHaveBeenCalledWith({
+      materialStyle: 1,
+      materialId: 201,
+      questionIds: [101],
+      releaseNote: 'Updated assessment release',
+      skipReview: true,
     });
   });
 
@@ -430,6 +459,32 @@ describe('publishToTrack', () => {
       expect(e.partialResult.trackQuestionIds).toEqual([101]);
       expect(e.partialResult.materialAction).toBe('created');
       expect(e.partialResult.trackMaterialId).toBe(201);
+    }
+  });
+
+  it('preserves updated material IDs when release creation fails', async () => {
+    const mockClient = {
+      updateQuestion: vi.fn().mockResolvedValue({ id: 101, title: 'Q1' }),
+      updateMaterial: vi.fn().mockResolvedValue({ id: 201, title: 'Test Material' }),
+      createRelease: vi.fn().mockRejectedValue(new Error('Updated release API error')),
+    } as unknown as TrackApiClient;
+
+    try {
+      await publishToTrack(mockClient, mockMaterialDraft, mockQuestionPayloads, {
+        dryRun: false,
+        adoptExistingByTitle: false,
+        mappedQuestionIds: [101],
+        mappedMaterialId: 201,
+      });
+      expect.fail('Should have thrown PartialPublishError');
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(PartialPublishError);
+      expect(e.originalError.message).toBe('Updated release API error');
+      expect(e.partialResult).toEqual({
+        trackQuestionIds: [101],
+        trackMaterialId: 201,
+        materialAction: 'updated',
+      });
     }
   });
 });

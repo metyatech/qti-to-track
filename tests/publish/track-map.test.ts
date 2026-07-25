@@ -175,6 +175,70 @@ describe('track-map', () => {
     expect(updated.materials?.['qti/Material']).toBeUndefined();
   });
 
+  it('replaces an existing release ID when a new release is created', () => {
+    const updated = updateTrackMapForPublish({
+      trackMap: {
+        version: 1,
+        materials: {
+          'qti/assessment-id': {
+            track_material_id: 201,
+            title: 'Material',
+            question_keys: ['qti/q1'],
+            source_hash: 'sha256:old',
+            updated_at: '2026-05-29T00:00:00.000Z',
+            release_id: 'rel-old',
+          },
+        },
+      },
+      target: { base_url: 'https://tracks.dev', appspace: 'app' },
+      baseKey: 'qti',
+      questionKeys: ['q1'],
+      materialKey: 'assessment-id',
+      questionPayloads: [
+        {
+          title: 'Q1',
+          questionKind: 1,
+          status: 2,
+          content: 'Pick',
+          howToSolve: '',
+          quizCategories: [99],
+          availableApps: ['training'],
+        },
+      ],
+      materialDraft: {
+        title: 'Material',
+        style: 1,
+        status: 2,
+        language: 'ja',
+        basicTimeMinutes: 1,
+        difficulty: 1,
+        questionKeys: ['q1'],
+        materialTypes: ['others'],
+        availableApps: ['training'],
+      },
+      materialPayload: {
+        title: 'Material',
+        style: 1,
+        status: 2,
+        language: 'ja',
+        basicTimeMinutes: 1,
+        difficulty: 1,
+        questionIds: [101],
+        materialTypes: ['others'],
+        availableApps: ['training'],
+      },
+      result: {
+        trackQuestionIds: [101],
+        trackMaterialId: 201,
+        materialAction: 'updated',
+        trackReleaseId: 'rel-new',
+      },
+      updatedAt: '2026-05-30T00:00:00.000Z',
+    });
+
+    expect(updated.materials?.['qti/assessment-id']?.release_id).toBe('rel-new');
+  });
+
   it('keeps updating the same material when the display title changes', () => {
     const updated = updateTrackMapForPublish({
       trackMap: {
