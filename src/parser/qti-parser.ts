@@ -1,4 +1,4 @@
-import { XMLParser } from 'fast-xml-parser';
+import { DOMParser, type Element as XmlElement } from '@xmldom/xmldom';
 import {
   type ParsedBlank,
   type ParsedAssessment,
@@ -18,30 +18,23 @@ interface ParsedResponseDeclaration {
 }
 
 interface OrderedElement {
+  type: 'element';
   name: string;
-  children: XmlRecord[];
+  children: OrderedNode[];
   attrs: XmlRecord;
 }
+
+interface OrderedText {
+  type: 'text';
+  value: string;
+}
+
+type OrderedNode = OrderedElement | OrderedText;
 
 interface HtmlRenderContext {
   responsesByDeclaration: Record<string, ParsedResponseDeclaration>;
   responseIdentifiers: string[];
 }
-
-const preserveOrderXmlParser = new XMLParser({
-  ignoreAttributes: false,
-  attributeNamePrefix: '@_',
-  removeNSPrefix: true,
-  trimValues: false,
-  parseTagValue: false,
-  parseAttributeValue: false,
-  preserveOrder: true,
-  processEntities: true,
-  transformTagName: (tagName) => {
-    const stripped = tagName.replace(/^qti-/, '');
-    return stripped.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
-  },
-});
 
 const INTERACTION_KEYS = [
   'choiceInteraction',
@@ -49,8 +42,6 @@ const INTERACTION_KEYS = [
   'extendedTextInteraction',
 ] as const;
 
-const ORDERED_ATTRS_KEY = ':@';
-const ORDERED_TEXT_KEY = '#text';
 const VOID_HTML_ELEMENTS = new Set([
   'area',
   'base',
@@ -107,55 +98,68 @@ function asRecords(value: unknown): XmlRecord[] {
   );
 }
 
-function getOrderedElement(node: unknown): OrderedElement | undefined {
-  if (!node || typeof node !== 'object' || Array.isArray(node)) {
-    return undefined;
-  }
-
-  const record = node as XmlRecord;
-  const name = Object.keys(record).find(
-    (key) => key !== ORDERED_ATTRS_KEY && key !== ORDERED_TEXT_KEY && !key.startsWith('#'),
-  );
-  if (name === undefined) {
-    return undefined;
-  }
-
-  const children = asRecords(record[name]);
-  const attrs =
-    record[ORDERED_ATTRS_KEY] && typeof record[ORDERED_ATTRS_KEY] === 'object' && !Array.isArray(record[ORDERED_ATTRS_KEY])
-      ? (record[ORDERED_ATTRS_KEY] as XmlRecord)
-      : {};
-
-  return { name, children, attrs };
+function normalizePresentationTagName(rawName: string): string {
+  const localName = rawName.split(':').pop() ?? rawName;
+  const stripped = localName.replace(/^qti-/, '');
+  return stripped.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
 }
 
-function getOrderedText(node: unknown): string | undefined {
-  if (!node || typeof node !== 'object' || Array.isArray(node)) {
-    return undefined;
-  }
-
-  const value = (node as XmlRecord)[ORDERED_TEXT_KEY];
-  return typeof value === 'string' ? value : undefined;
-}
-
-function parseOrderedAssessmentItemXml(xml: string): OrderedElement | undefined {
-  const parsed = preserveOrderXmlParser.parse(xml);
-  if (!Array.isArray(parsed)) {
-    return undefined;
-  }
-
-  for (const node of parsed) {
-    const element = getOrderedElement(node);
-    if (element?.name === 'assessmentItem') {
-      return element;
+function toOrderedElement(element: XmlElement): OrderedElement {
+  const attrs: XmlRecord = {};
+  for (let index = 0; index < element.attributes.length; index += 1) {
+    const attribute = element.attributes.item(index);
+    if (attribute !== null) {
+      attrs[`@_${attribute.name}`] = attribute.value;
     }
   }
 
-  return undefined;
+  const children: OrderedNode[] = [];
+  for (let index = 0; index < element.childNodes.length; index += 1) {
+    const child = element.childNodes.item(index);
+    if (child === null) {
+      continue;
+    }
+
+    if (child.nodeType === 1) {
+      children.push(toOrderedElement(child as XmlElement));
+    } else if (child.nodeType === 3 || child.nodeType === 4) {
+      children.push({ type: 'text', value: child.nodeValue ?? '' });
+    }
+  }
+
+  return {
+    type: 'element',
+    name: normalizePresentationTagName(element.localName || element.tagName),
+    children,
+    attrs,
+  };
+}
+
+function parseOrderedAssessmentItemXml(xml: string): OrderedElement | undefined {
+  const document = new DOMParser({
+    onError(_level, message) {
+      throw new Error(`Invalid QTI presentation XML: ${message}`);
+    },
+  }).parseFromString(xml, 'application/xml');
+  const root = document.documentElement;
+  if (root === null) {
+    return undefined;
+  }
+
+  const item = toOrderedElement(root);
+  return item.name === 'assessmentItem' ? item : undefined;
+}
+
+function getOrderedElement(node: OrderedNode): OrderedElement | undefined {
+  return node.type === 'element' ? node : undefined;
+}
+
+function getOrderedText(node: OrderedNode): string | undefined {
+  return node.type === 'text' ? node.value : undefined;
 }
 
 function findOrderedChildElement(
-  nodes: readonly XmlRecord[],
+  nodes: readonly OrderedNode[],
   name: string,
 ): OrderedElement | undefined {
   for (const node of nodes) {
@@ -169,7 +173,7 @@ function findOrderedChildElement(
 }
 
 function findOrderedChildElements(
-  nodes: readonly XmlRecord[],
+  nodes: readonly OrderedNode[],
   name: string,
 ): OrderedElement[] {
   return nodes
@@ -178,7 +182,7 @@ function findOrderedChildElements(
 }
 
 function findOrderedDescendantElements(
-  nodes: readonly XmlRecord[],
+  nodes: readonly OrderedNode[],
   name: string,
 ): OrderedElement[] {
   const matches: OrderedElement[] = [];
@@ -329,14 +333,14 @@ function renderTextEntryPlaceholder(
 }
 
 function serializeOrderedHtml(
-  nodes: readonly XmlRecord[],
+  nodes: readonly OrderedNode[],
   context: HtmlRenderContext,
 ): string {
   return nodes.map((node) => serializeOrderedHtmlNode(node, context)).join('');
 }
 
 function serializeOrderedHtmlNode(
-  node: XmlRecord,
+  node: OrderedNode,
   context: HtmlRenderContext,
 ): string {
   const text = getOrderedText(node);
@@ -370,7 +374,7 @@ function serializeOrderedHtmlNode(
   }
 }
 
-function renderOrderedPlainText(nodes: readonly XmlRecord[]): string {
+function renderOrderedPlainText(nodes: readonly OrderedNode[]): string {
   const chunks: string[] = [];
 
   for (const node of nodes) {

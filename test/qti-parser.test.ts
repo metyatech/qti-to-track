@@ -1,3 +1,4 @@
+import { DOMParser } from '@xmldom/xmldom';
 import { describe, expect, it } from 'vitest';
 import {
   parseAssessmentItemXml,
@@ -5,6 +6,7 @@ import {
   parseQtiPackageFromXml,
 } from '../src/parser/qti-parser.js';
 import { parseXml } from '../src/parser/xml-parser.js';
+import { toTrackPayloads } from '../src/generator/track-generator.js';
 
 describe('xml-parser', () => {
   it('normalizes QTI namespace prefixes for structural nodes', () => {
@@ -76,6 +78,40 @@ describe('qti-parser', () => {
     expect(parsed.blanks).toEqual([
       { responseIdentifier: 'RESPONSE', answer: 'answer', kind: 'exact' },
     ]);
+  });
+
+  it.each([
+    ['hexadecimal references', '&#x3C;html&#x3E;\n&#x3C;body&#x3E;\nfoo &amp; bar\n&#x3C;/body&#x3E;\n&#x3C;/html&#x3E;'],
+    ['decimal references', '&#60;html&#62;\n&#60;body&#62;\nfoo &amp; bar\n&#60;/body&#62;\n&#60;/html&#62;'],
+    ['named references', '&lt;html&gt;\n&lt;body&gt;\nfoo &amp; bar\n&lt;/body&gt;\n&lt;/html&gt;'],
+  ])('decodes %s once before escaping semantic code text for Track HTML', (_label, encodedSource) => {
+    const content = toTrackContent('ENTITY', `<qti-assessment-item identifier="ENTITY" title="Entities"><qti-item-body><pre><code>${encodedSource}</code></pre><qti-extended-text-interaction response-identifier="RESPONSE" /></qti-item-body></qti-assessment-item>`);
+    const expectedSource = '<html>\n<body>\nfoo & bar\n</body>\n</html>';
+
+    expect(content).toContain('<pre><code>&lt;html&gt;\n&lt;body&gt;\nfoo &amp; bar\n&lt;/body&gt;\n&lt;/html&gt;</code></pre>');
+    expect(content).not.toContain('&amp;#x3C;');
+    expect(content).not.toContain('&amp;#60;');
+    expect(content).not.toContain('&amp;lt;');
+
+    const document = parseTrackHtml(content);
+    expect(document.getElementsByTagName('code').item(0)?.textContent).toBe(expectedSource);
+  });
+
+  it('preserves escaped HTML around the official q18-style span, its style, quoted attributes, and Unicode', () => {
+    const style = 'display:inline-block;min-width:4em;border:1px solid #000;text-align:center;background:transparent;';
+    const content = toTrackContent('Q18', `<qti-assessment-item identifier="Q18" title="Q18"><qti-item-body><pre><code>&#x3C;div id=&quot;content&quot;&#x3E;\n    document.getElementById(&quot;content&quot;). <span style="${style}" title="&quot;quoted&quot;" data-label="日本語">A</span> = &quot;2em&quot;;\n&#x3C;/div&#x3E;</code></pre><qti-extended-text-interaction responseIdentifier="RESPONSE" /></qti-item-body></qti-assessment-item>`);
+    const document = parseTrackHtml(content);
+    const code = document.getElementsByTagName('code').item(0);
+    const span = document.getElementsByTagName('span').item(0);
+
+    expect(span?.getAttribute('style')).toBe(style);
+    expect(span?.getAttribute('title')).toBe('"quoted"');
+    expect(span?.getAttribute('data-label')).toBe('日本語');
+    expect(span?.textContent).toBe('A');
+    expect(code?.textContent).toBe('<div id="content">\n    document.getElementById("content"). A = "2em";\n</div>');
+    expect(content).not.toContain('&#x3C;');
+    expect(content).not.toContain('&#60;');
+    expect(content).not.toContain('&amp;lt;');
   });
 
   it('keeps rich HTML in choices and feedback', () => {
@@ -150,3 +186,22 @@ describe('qti-parser', () => {
     expect(parsedPackage.itemsByIdentifier['ITEM-2']).toBeUndefined();
   });
 });
+
+function toTrackContent(identifier: string, itemXml: string): string {
+  const parsed = parseQtiPackageFromXml({
+    assessmentXml: `<assessmentTest identifier="ENTITY-TEST"><testPart><assessmentSection><assessmentItemRef identifier="${identifier}" href="entity.xml" /></assessmentSection></testPart></assessmentTest>`,
+    itemXmlByIdentifier: {
+      [identifier]: itemXml,
+    },
+  });
+
+  return toTrackPayloads(parsed).questions[0]?.content ?? '';
+}
+
+function parseTrackHtml(content: string) {
+  return new DOMParser({
+    onError(_level, message) {
+      throw new Error(`Invalid Track HTML fragment in test: ${message}`);
+    },
+  }).parseFromString(`<root>${content}</root>`, 'application/xml');
+}

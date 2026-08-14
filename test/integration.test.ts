@@ -145,7 +145,7 @@ describe('integration: canonical QTI fixtures', () => {
       </qti-assessment-test>
     `;
     const itemXml = `
-      <assessment-item identifier="demo-question" title="Demo Question">
+      <qti-assessment-item identifier="demo-question" title="Demo Question">
         <qti-item-body>
           <p><a href="${demoUrl}">完成見本を開く</a></p>
           <qti-extended-text-interaction response-identifier="RESPONSE" />
@@ -205,7 +205,7 @@ describe('integration: canonical QTI fixtures', () => {
       </qti-assessment-test>
     `;
     const itemXml = `
-      <assessment-item identifier="heading-question" title="Heading Question">
+      <qti-assessment-item identifier="heading-question" title="Heading Question">
         <qti-item-body>
           <h1>見出し1</h1>
           <h2>見出し2</h2>

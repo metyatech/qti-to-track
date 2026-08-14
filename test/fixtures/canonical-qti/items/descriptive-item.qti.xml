@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<assessment-item xmlns="http://www.imsglobal.org/xsd/imsqti_v3p0" identifier="descriptive-item" title="Descriptive Item" adaptive="false" time-dependent="false">
+<qti-assessment-item xmlns="http://www.imsglobal.org/xsd/imsqti_v3p0" identifier="descriptive-item" title="Descriptive Item" adaptive="false" time-dependent="false">
   <qti-response-declaration identifier="RESPONSE" cardinality="single" base-type="string"/>
   <qti-outcome-declaration identifier="SCORE" cardinality="single" base-type="float"/>
   <qti-outcome-declaration identifier="MAXSCORE" cardinality="single" base-type="float">
