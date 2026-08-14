@@ -12,11 +12,6 @@ import type {
 
 const DEFAULT_ITEM_TIME_LIMIT_SECONDS = 60;
 
-interface MarkdownFence {
-  character: '`' | '~';
-  length: number;
-}
-
 function isPositiveFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
@@ -69,42 +64,16 @@ function ensureClozePlaceholders(content: string, blanks: ParsedQtiItem['blanks'
   return content.length > 0 ? `${content}\n${placeholders}` : placeholders;
 }
 
-function toTrackSafeRichText(markdown: string): string {
-  let fence: MarkdownFence | undefined;
+function escapeHtmlText(value: string): string {
+  return value
+    .replace(/&/gu, '&amp;')
+    .replace(/</gu, '&lt;')
+    .replace(/>/gu, '&gt;');
+}
 
-  return markdown
-    .split('\n')
-    .map((line) => {
-      const fenceMatch = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
-      if (fenceMatch !== null) {
-        const marker = fenceMatch[1] as string;
-        const character = marker[0] as MarkdownFence['character'];
-        if (fence === undefined) {
-          fence = { character, length: marker.length };
-        } else if (
-          character === fence.character
-          && marker.length >= fence.length
-          && (fenceMatch[2] as string).trim().length === 0
-        ) {
-          fence = undefined;
-        }
-        return line;
-      }
-
-      if (fence !== undefined) {
-        return line;
-      }
-
-      const headingMatch = /^ {0,3}(#{1,6})(?:[ \t]+|$)(.*)$/u.exec(line);
-      if (headingMatch === null) {
-        return line;
-      }
-
-      const level = (headingMatch[1] as string).length;
-      const content = (headingMatch[2] as string).replace(/[ \t]+#+[ \t]*$/u, '').trimEnd();
-      return `<h${String(level)}>${content}</h${String(level)}>`;
-    })
-    .join('\n');
+function rubricToHtmlParagraph(rubric: string): string {
+  const text = rubric.replace(/\[(\d+)\]/gu, '[$1点]');
+  return `<p>${escapeHtmlText(text).replace(/\r?\n/gu, '<br />')}</p>`;
 }
 
 function formatMaxScore(maxScore: number): string {
@@ -113,9 +82,10 @@ function formatMaxScore(maxScore: number): string {
 
 function buildScoringFooter(item: ParsedQtiItem): string | undefined {
   const rubric = item.scorerRubric
-    .map((line) => line.replace(/\[(\d+)\]/g, '[$1点]'))
-    .join('\n\n')
-    .trim();
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map(rubricToHtmlParagraph)
+    .join('\n');
   const maxScore = item.maxScore === undefined ? undefined : formatMaxScore(item.maxScore);
   if (rubric.length === 0 && maxScore === undefined) {
     return undefined;
@@ -124,7 +94,7 @@ function buildScoringFooter(item: ParsedQtiItem): string | undefined {
   const summary = maxScore === undefined
     ? '採点基準'
     : `採点基準（最大点: ${maxScore}点）`;
-  const body = rubric.length > 0 ? rubric : `最大点: ${maxScore}点`;
+  const body = rubric.length > 0 ? rubric : `<p>${escapeHtmlText(`最大点: ${maxScore}点`)}</p>`;
 
   return [
     '<details>',
@@ -142,7 +112,7 @@ function appendScoringFooter(content: string, item: ParsedQtiItem): string {
     return content;
   }
 
-  return [content.trimEnd(), '---', footer].filter((value) => value.length > 0).join('\n\n');
+  return [content.trimEnd(), '<hr />', footer].filter((value) => value.length > 0).join('\n\n');
 }
 
 function estimateItemTimeLimitSeconds(item: ParsedQtiItem): number {
@@ -163,11 +133,9 @@ function estimateMaterialTimeLimitSeconds(parsed: ParsedQtiPackage): number {
 
 function toQuestionPayload(item: ParsedQtiItem): TrackQuestionPayload {
   const content = appendScoringFooter(
-    toTrackSafeRichText(
-      item.interactionType === 'text-entry'
-        ? ensureClozePlaceholders(item.prompt, item.blanks)
-        : item.prompt,
-    ),
+    item.interactionType === 'text-entry'
+      ? ensureClozePlaceholders(item.prompt, item.blanks)
+      : item.prompt,
     item,
   );
   const basePayload: TrackQuestionPayload = {
@@ -175,7 +143,7 @@ function toQuestionPayload(item: ParsedQtiItem): TrackQuestionPayload {
     questionKind: toQuestionKind(item),
     status: 2,
     content,
-    howToSolve: toTrackSafeRichText(item.feedback.join('\n').trim()),
+    howToSolve: item.feedback.join('\n').trim(),
     quizCategories: [99],
     availableApps: ['training'],
   };

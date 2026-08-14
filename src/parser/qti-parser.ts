@@ -23,25 +23,9 @@ interface OrderedElement {
   attrs: XmlRecord;
 }
 
-interface MarkdownRenderContext {
+interface HtmlRenderContext {
   responsesByDeclaration: Record<string, ParsedResponseDeclaration>;
   responseIdentifiers: string[];
-}
-
-interface MarkdownInlineRenderOptions {
-  lineBreak?: string;
-}
-
-type MarkdownTableAlignment = 'left' | 'center' | 'right';
-
-interface MarkdownTableCell {
-  content: string;
-  alignment?: MarkdownTableAlignment;
-}
-
-interface MarkdownTableRow {
-  cells: MarkdownTableCell[];
-  header: boolean;
 }
 
 const preserveOrderXmlParser = new XMLParser({
@@ -67,29 +51,21 @@ const INTERACTION_KEYS = [
 
 const ORDERED_ATTRS_KEY = ':@';
 const ORDERED_TEXT_KEY = '#text';
-const BLOCK_ELEMENT_NAMES = new Set([
-  'blockquote',
-  'contentBody',
-  'div',
-  'h1',
-  'h2',
-  'h3',
-  'h4',
-  'h5',
-  'h6',
+const VOID_HTML_ELEMENTS = new Set([
+  'area',
+  'base',
+  'br',
+  'col',
+  'embed',
   'hr',
-  'li',
-  'ol',
-  'p',
-  'pre',
-  'rubricBlock',
-  'table',
-  'tbody',
-  'td',
-  'th',
-  'thead',
-  'tr',
-  'ul',
+  'img',
+  'input',
+  'link',
+  'meta',
+  'param',
+  'source',
+  'track',
+  'wbr',
 ]);
 
 function asRecord(value: unknown, errorMessage: string): XmlRecord {
@@ -138,7 +114,7 @@ function getOrderedElement(node: unknown): OrderedElement | undefined {
 
   const record = node as XmlRecord;
   const name = Object.keys(record).find(
-    (key) => key !== ORDERED_ATTRS_KEY && key !== ORDERED_TEXT_KEY,
+    (key) => key !== ORDERED_ATTRS_KEY && key !== ORDERED_TEXT_KEY && !key.startsWith('#'),
   );
   if (name === undefined) {
     return undefined;
@@ -271,9 +247,7 @@ function findInteraction(itemBody: XmlRecord): {
     }
   }
 
-  // textEntryInteraction can be deeply nested inside p, div, etc.
-  const hasTextEntry = JSON.stringify(itemBody).includes('"textEntryInteraction"');
-  if (hasTextEntry) {
+  if (JSON.stringify(itemBody).includes('"textEntryInteraction"')) {
     return { key: 'textEntryInteraction' };
   }
 
@@ -294,99 +268,31 @@ function inferInteractionType(
   return 'extended-text';
 }
 
-function extractPrompt(itemBody: XmlRecord): string {
-  const chunks: string[] = [];
-
-  for (const [key, value] of Object.entries(itemBody)) {
-    if (INTERACTION_KEYS.includes(key as (typeof INTERACTION_KEYS)[number])) {
-      break;
-    }
-
-    if (key.startsWith('@_')) {
-      continue;
-    }
-
-    const text = getTextContent(value);
-    if (text) {
-      chunks.push(text);
-    }
-  }
-
-  return chunks.join('\n').trim();
+function escapeHtmlText(value: string): string {
+  return value
+    .replace(/&/gu, '&amp;')
+    .replace(/</gu, '&lt;')
+    .replace(/>/gu, '&gt;');
 }
 
-function extractChoices(interaction: XmlRecord | undefined, interactionType: TrackQuestionType): ParsedQtiChoice[] {
-  if (interactionType !== 'choice' || !interaction) {
-    return [];
-  }
-
-  return asArray(interaction.simpleChoice)
-    .map((choice) => asRecord(choice, 'Invalid simpleChoice node: expected object.'))
-    .map((choice): ParsedQtiChoice => ({
-      identifier: readStringAttribute(choice, '@_identifier') ?? '',
-      text: getTextContent(choice),
-    }))
-    .filter((choice) => choice.identifier.length > 0);
+function escapeHtmlAttribute(value: string): string {
+  return escapeHtmlText(value).replace(/"/gu, '&quot;');
 }
 
-function extractCorrectResponses(itemNode: XmlRecord): string[] {
-  return extractResponseDeclarations(itemNode).flatMap((declaration) => declaration.values);
+function serializeAttributes(attrs: XmlRecord): string {
+  return Object.entries(attrs)
+    .filter(([key, value]) => key.startsWith('@_') && typeof value === 'string')
+    .map(([key, value]) => ` ${key.slice(2)}="${escapeHtmlAttribute(value as string)}"`)
+    .join('');
 }
 
-function extractResponseDeclarations(itemNode: XmlRecord): ParsedResponseDeclaration[] {
-  const declarations = asArray(itemNode.responseDeclaration)
-    .filter((value): value is XmlRecord => !!value && typeof value === 'object' && !Array.isArray(value));
-
-  const parsedDeclarations: ParsedResponseDeclaration[] = [];
-
-  for (const declaration of declarations) {
-    const declarationId = readStringAttribute(declaration, '@_identifier');
-    if (!declarationId) {
-      continue;
-    }
-
-    const correctResponse = declaration.correctResponse;
-    if (!correctResponse || typeof correctResponse !== 'object' || Array.isArray(correctResponse)) {
-      continue;
-    }
-
-    const valueNode = (correctResponse as XmlRecord).value;
-    const values: string[] = [];
-
-    for (const value of asArray(valueNode)) {
-      const text = getTextContent(value).trim();
-      if (text) {
-        values.push(text);
-      }
-    }
-
-    if (values.length > 0) {
-      const interpretationKind = readStringAttribute(declaration, '@_interpretation') === 'regex' ? 'regex' : 'exact';
-      const kind =
-        interpretationKind === 'regex' ||
-        (values.length === 1 && values[0]!.length >= 2 && values[0]!.startsWith('/') && values[0]!.endsWith('/'))
-          ? 'regex'
-          : 'exact';
-
-      parsedDeclarations.push({
-        identifier: declarationId,
-        values: kind === 'regex' ? values.map((value) => value.replace(/^\/(.+)\/$/u, '$1')) : values,
-        kind,
-      });
-    }
-  }
-
-  return parsedDeclarations;
-}
-
-function extractCorrectResponsesByDeclaration(itemNode: XmlRecord): Record<string, ParsedResponseDeclaration> {
-  const map: Record<string, ParsedResponseDeclaration> = {};
-
-  for (const declaration of extractResponseDeclarations(itemNode)) {
-    map[declaration.identifier] = declaration;
-  }
-
-  return map;
+function createHtmlRenderContext(
+  responsesByDeclaration: Record<string, ParsedResponseDeclaration>,
+): HtmlRenderContext {
+  return {
+    responsesByDeclaration,
+    responseIdentifiers: [],
+  };
 }
 
 function formatBlankPlaceholder(blank: ParsedBlank | undefined): string {
@@ -397,369 +303,9 @@ function formatBlankPlaceholder(blank: ParsedBlank | undefined): string {
   return blank.kind === 'regex' ? `\${/${blank.answer}/}` : `\${${blank.answer}}`;
 }
 
-function createMarkdownRenderContext(
-  responsesByDeclaration: Record<string, ParsedResponseDeclaration>,
-): MarkdownRenderContext {
-  return {
-    responsesByDeclaration,
-    responseIdentifiers: [],
-  };
-}
-
-function renderOrderedMarkdownBlocks(
-  nodes: readonly XmlRecord[],
-  context: MarkdownRenderContext,
-): string {
-  const blocks: string[] = [];
-
-  for (const node of nodes) {
-    const rendered = renderOrderedMarkdownBlock(node, context);
-    if (rendered.length > 0) {
-      blocks.push(rendered);
-    }
-  }
-
-  return blocks.join('\n\n').trim();
-}
-
-function renderOrderedMarkdownBlock(
-  node: XmlRecord,
-  context: MarkdownRenderContext,
-): string {
-  const text = getOrderedText(node);
-  if (text !== undefined) {
-    return text.trim().length > 0 ? normalizeInlineMarkdown(text) : '';
-  }
-
-  const element = getOrderedElement(node);
-  if (element === undefined) {
-    return '';
-  }
-
-  switch (element.name) {
-    case 'blockquote': {
-      const content = renderOrderedMarkdownBlocks(element.children, context);
-      return content
-        .split('\n')
-        .map((line) => `> ${line}`)
-        .join('\n')
-        .trim();
-    }
-    case 'contentBody':
-    case 'div':
-    case 'rubricBlock':
-      return renderOrderedMarkdownBlocks(element.children, context);
-    case 'h1':
-    case 'h2':
-    case 'h3':
-    case 'h4':
-    case 'h5':
-    case 'h6': {
-      const level = Number(element.name.slice(1));
-      return `${'#'.repeat(level)} ${renderOrderedMarkdownInline(element.children, context)}`;
-    }
-    case 'hr':
-      return '---';
-    case 'ol':
-      return renderOrderedMarkdownList(element.children, context, true);
-    case 'p':
-      return renderOrderedMarkdownInline(element.children, context);
-    case 'pre':
-      return renderCodeFence(renderOrderedPreText(element.children, context));
-    case 'table':
-      return renderOrderedMarkdownTable(element, context);
-    case 'ul':
-      return renderOrderedMarkdownList(element.children, context, false);
-    default:
-      if (hasBlockElement(element.children)) {
-        return renderOrderedMarkdownBlocks(element.children, context);
-      }
-      return renderOrderedMarkdownInline(element.children, context);
-  }
-}
-
-function renderOrderedMarkdownTable(
-  table: OrderedElement,
-  context: MarkdownRenderContext,
-): string {
-  const rows: MarkdownTableRow[] = [];
-
-  for (const node of table.children) {
-    const element = getOrderedElement(node);
-    if (element === undefined) {
-      continue;
-    }
-
-    if (element.name === 'thead' || element.name === 'tbody' || element.name === 'tfoot') {
-      const sectionIsHeader = element.name === 'thead';
-      for (const row of findOrderedChildElements(element.children, 'tr')) {
-        rows.push(renderOrderedMarkdownTableRow(row, context, sectionIsHeader));
-      }
-      continue;
-    }
-
-    if (element.name === 'tr') {
-      rows.push(renderOrderedMarkdownTableRow(element, context, false));
-    }
-  }
-
-  const nonEmptyRows = rows.filter((row) => row.cells.length > 0);
-  const columnCount = Math.max(0, ...nonEmptyRows.map((row) => row.cells.length));
-  if (columnCount === 0) {
-    return '';
-  }
-
-  const headerIndex = nonEmptyRows.findIndex((row) => row.header);
-  const headerRow = headerIndex >= 0
-    ? nonEmptyRows[headerIndex]!
-    : { cells: [], header: true };
-  const bodyRows = nonEmptyRows.filter((_, index) => index !== headerIndex);
-  const paddedHeaderCells = padMarkdownTableCells(headerRow.cells, columnCount);
-  const paddedBodyRows = bodyRows.map((row) => padMarkdownTableCells(row.cells, columnCount));
-  const alignments = Array.from({ length: columnCount }, (_, columnIndex) =>
-    resolveMarkdownTableColumnAlignment(
-      [paddedHeaderCells, ...paddedBodyRows],
-      columnIndex,
-    ),
-  );
-
-  return [
-    formatMarkdownTableRow(paddedHeaderCells.map((cell) => cell.content)),
-    formatMarkdownTableRow(alignments.map(formatMarkdownTableAlignment)),
-    ...paddedBodyRows.map((cells) => formatMarkdownTableRow(cells.map((cell) => cell.content))),
-  ].join('\n');
-}
-
-function renderOrderedMarkdownTableRow(
-  row: OrderedElement,
-  context: MarkdownRenderContext,
-  sectionIsHeader: boolean,
-): MarkdownTableRow {
-  const cellElements = row.children
-    .map((node) => getOrderedElement(node))
-    .filter((element): element is OrderedElement => element?.name === 'th' || element?.name === 'td');
-
-  return {
-    cells: cellElements.map((cell) => renderOrderedMarkdownTableCell(cell, context)),
-    header: sectionIsHeader || cellElements.some((cell) => cell.name === 'th'),
-  };
-}
-
-function renderOrderedMarkdownTableCell(
-  cell: OrderedElement,
-  context: MarkdownRenderContext,
-): MarkdownTableCell {
-  assertSupportedMarkdownTableCellSpan(cell);
-
-  return {
-    content: normalizeMarkdownTableCell(renderOrderedMarkdownTableCellContent(cell.children, context)),
-    alignment: readMarkdownTableAlignment(cell.attrs),
-  };
-}
-
-function assertSupportedMarkdownTableCellSpan(cell: OrderedElement): void {
-  for (const attribute of ['@_colspan', '@_rowspan']) {
-    const value = readStringAttribute(cell.attrs, attribute);
-    if (value !== undefined && value !== '1') {
-      throw new Error(
-        `Cannot safely convert QTI table cell with ${attribute.slice(2)}="${value}" to Markdown.`,
-      );
-    }
-  }
-}
-
-function renderOrderedMarkdownTableCellContent(
-  nodes: readonly XmlRecord[],
-  context: MarkdownRenderContext,
-): string {
-  const chunks: string[] = [];
-
-  for (const node of nodes) {
-    const text = getOrderedText(node);
-    if (text !== undefined) {
-      chunks.push(text);
-      continue;
-    }
-
-    const element = getOrderedElement(node);
-    if (element === undefined) {
-      continue;
-    }
-
-    if (element.name === 'p') {
-      chunks.push('<br>', renderOrderedMarkdownInline(element.children, context, { lineBreak: '<br>' }), '<br>');
-      continue;
-    }
-
-    if (element.name === 'contentBody' || element.name === 'div') {
-      chunks.push('<br>', renderOrderedMarkdownTableCellContent(element.children, context), '<br>');
-      continue;
-    }
-
-    if (element.name === 'pre') {
-      chunks.push('<br>', formatInlineCode(renderOrderedPreText(element.children, context)), '<br>');
-      continue;
-    }
-
-    if (BLOCK_ELEMENT_NAMES.has(element.name)) {
-      chunks.push(
-        '<br>',
-        renderOrderedMarkdownBlock(node, context).replace(/\r?\n+/gu, '<br>'),
-        '<br>',
-      );
-      continue;
-    }
-
-    chunks.push(renderOrderedMarkdownInlineNode(node, context, { lineBreak: '<br>' }));
-  }
-
-  return chunks.join('');
-}
-
-function readMarkdownTableAlignment(attrs: XmlRecord): MarkdownTableAlignment | undefined {
-  const style = readStringAttribute(attrs, '@_style');
-  const match = style?.match(/(?:^|;)\s*text-align\s*:\s*(left|center|right)\b/iu);
-  return match?.[1]?.toLowerCase() as MarkdownTableAlignment | undefined;
-}
-
-function normalizeMarkdownTableCell(value: string): string {
-  return value
-    .replace(/\s+/gu, ' ')
-    .replace(/\s*<br>\s*/gu, '<br>')
-    .replace(/(?:<br>){2,}/gu, '<br>')
-    .replace(/^(?:<br>)+|(?:<br>)+$/gu, '')
-    .trim()
-    .replace(/(?<!\\)\|/gu, '\\|');
-}
-
-function padMarkdownTableCells(
-  cells: readonly MarkdownTableCell[],
-  columnCount: number,
-): MarkdownTableCell[] {
-  return Array.from({ length: columnCount }, (_, index) => cells[index] ?? { content: '' });
-}
-
-function resolveMarkdownTableColumnAlignment(
-  rows: readonly MarkdownTableCell[][],
-  columnIndex: number,
-): MarkdownTableAlignment | undefined {
-  const alignments = [
-    ...new Set(
-      rows
-        .map((cells) => cells[columnIndex]?.alignment)
-        .filter((alignment): alignment is MarkdownTableAlignment => alignment !== undefined),
-    ),
-  ];
-
-  if (alignments.length > 1) {
-    throw new Error(
-      `Cannot safely convert conflicting QTI table alignments in column ${String(columnIndex + 1)} to Markdown.`,
-    );
-  }
-
-  return alignments[0];
-}
-
-function formatMarkdownTableAlignment(
-  alignment: MarkdownTableAlignment | undefined,
-): string {
-  switch (alignment) {
-    case 'left':
-      return ':---';
-    case 'center':
-      return ':---:';
-    case 'right':
-      return '---:';
-    default:
-      return '---';
-  }
-}
-
-function formatMarkdownTableRow(cells: readonly string[]): string {
-  return `| ${cells.join(' | ')} |`;
-}
-
-function renderOrderedMarkdownList(
-  nodes: readonly XmlRecord[],
-  context: MarkdownRenderContext,
-  ordered: boolean,
-): string {
-  const items = nodes
-    .map((node) => getOrderedElement(node))
-    .filter((element): element is OrderedElement => element?.name === 'li');
-
-  return items
-    .map((item, index) => {
-      const prefix = ordered ? `${index + 1}. ` : '- ';
-      const content = renderOrderedMarkdownBlocks(item.children, context) || renderOrderedMarkdownInline(item.children, context);
-      const lines = content.split('\n');
-      const [firstLine = '', ...restLines] = lines;
-      return [
-        `${prefix}${firstLine}`,
-        ...restLines.map((line) => `${' '.repeat(prefix.length)}${line}`),
-      ].join('\n');
-    })
-    .join('\n');
-}
-
-function renderOrderedMarkdownInline(
-  nodes: readonly XmlRecord[],
-  context: MarkdownRenderContext,
-  options: MarkdownInlineRenderOptions = {},
-): string {
-  return normalizeInlineMarkdown(
-    nodes.map((node) => renderOrderedMarkdownInlineNode(node, context, options)).join(''),
-  );
-}
-
-function renderOrderedMarkdownInlineNode(
-  node: XmlRecord,
-  context: MarkdownRenderContext,
-  options: MarkdownInlineRenderOptions = {},
-): string {
-  const text = getOrderedText(node);
-  if (text !== undefined) {
-    return text;
-  }
-
-  const element = getOrderedElement(node);
-  if (element === undefined) {
-    return '';
-  }
-
-  switch (element.name) {
-    case 'a': {
-      const label = renderOrderedMarkdownInline(element.children, context, options);
-      const href = readStringAttribute(element.attrs, '@_href');
-      return href === undefined || href.length === 0 ? label : `[${label}](${href})`;
-    }
-    case 'br':
-      return options.lineBreak ?? '<br>';
-    case 'code':
-      return formatInlineCode(rawOrderedText(element.children));
-    case 'del':
-      return `~~${renderOrderedMarkdownInline(element.children, context, options)}~~`;
-    case 'em':
-    case 'i':
-      return `*${renderOrderedMarkdownInline(element.children, context, options)}*`;
-    case 'img': {
-      const src = readStringAttribute(element.attrs, '@_src') ?? '';
-      const alt = readStringAttribute(element.attrs, '@_alt') ?? '';
-      return src.length > 0 ? `![${alt}](${src})` : '';
-    }
-    case 'strong':
-    case 'b':
-      return `**${renderOrderedMarkdownInline(element.children, context, options)}**`;
-    case 'textEntryInteraction':
-      return renderTextEntryPlaceholder(element, context);
-    default:
-      return renderOrderedMarkdownInline(element.children, context, options);
-  }
-}
-
 function renderTextEntryPlaceholder(
   element: OrderedElement,
-  context: MarkdownRenderContext,
+  context: HtmlRenderContext,
 ): string {
   const responseIdentifier = readResponseIdentifierAttribute(element.attrs);
   const responseDeclaration =
@@ -767,7 +313,7 @@ function renderTextEntryPlaceholder(
       ? undefined
       : context.responsesByDeclaration[responseIdentifier];
 
-  if (responseIdentifier !== undefined) {
+  if (responseIdentifier !== undefined && !context.responseIdentifiers.includes(responseIdentifier)) {
     context.responseIdentifiers.push(responseIdentifier);
   }
 
@@ -782,47 +328,49 @@ function renderTextEntryPlaceholder(
   );
 }
 
-function renderCodeFence(rawCode: string): string {
-  const code = rawCode.replace(/^\n+/u, '').replace(/\n+$/u, '');
-  return `\`\`\`\n${code}\n\`\`\``;
-}
-
-function formatInlineCode(rawCode: string): string {
-  const code = normalizeInlineMarkdown(rawCode);
-  if (!code.includes('`')) {
-    return `\`${code}\``;
-  }
-
-  const longestRun = Math.max(
-    ...Array.from(code.matchAll(/`+/gu), (match) => match[0].length),
-  );
-  const fence = '`'.repeat(longestRun + 1);
-  return `${fence} ${code} ${fence}`;
-}
-
-function rawOrderedText(nodes: readonly XmlRecord[]): string {
-  const chunks: string[] = [];
-
-  for (const node of nodes) {
-    const text = getOrderedText(node);
-    if (text !== undefined) {
-      chunks.push(text);
-      continue;
-    }
-
-    const element = getOrderedElement(node);
-    if (element !== undefined) {
-      chunks.push(rawOrderedText(element.children));
-    }
-  }
-
-  return chunks.join('');
-}
-
-function renderOrderedPreText(
+function serializeOrderedHtml(
   nodes: readonly XmlRecord[],
-  context: MarkdownRenderContext,
+  context: HtmlRenderContext,
 ): string {
+  return nodes.map((node) => serializeOrderedHtmlNode(node, context)).join('');
+}
+
+function serializeOrderedHtmlNode(
+  node: XmlRecord,
+  context: HtmlRenderContext,
+): string {
+  const text = getOrderedText(node);
+  if (text !== undefined) {
+    return escapeHtmlText(text);
+  }
+
+  const element = getOrderedElement(node);
+  if (element === undefined) {
+    return '';
+  }
+
+  switch (element.name) {
+    case 'contentBody':
+    case 'rubricBlock':
+      return element.name === 'rubricBlock' ? '' : serializeOrderedHtml(element.children, context);
+    case 'choiceInteraction':
+    case 'extendedTextInteraction':
+      return '';
+    case 'textEntryInteraction':
+      return renderTextEntryPlaceholder(element, context);
+    default: {
+      const attributes = serializeAttributes(element.attrs);
+      const openingTag = `<${element.name}${attributes}`;
+      if (VOID_HTML_ELEMENTS.has(element.name)) {
+        return `${openingTag} />`;
+      }
+
+      return `${openingTag}>${serializeOrderedHtml(element.children, context)}</${element.name}>`;
+    }
+  }
+}
+
+function renderOrderedPlainText(nodes: readonly XmlRecord[]): string {
   const chunks: string[] = [];
 
   for (const node of nodes) {
@@ -837,25 +385,24 @@ function renderOrderedPreText(
       continue;
     }
 
-    chunks.push(
-      element.name === 'textEntryInteraction'
-        ? renderTextEntryPlaceholder(element, context)
-        : renderOrderedPreText(element.children, context),
-    );
+    if (element.name === 'br') {
+      chunks.push('\n');
+      continue;
+    }
+
+    chunks.push(renderOrderedPlainText(element.children));
   }
 
   return chunks.join('');
 }
 
-function hasBlockElement(nodes: readonly XmlRecord[]): boolean {
-  return nodes.some((node) => {
-    const element = getOrderedElement(node);
-    return element !== undefined && BLOCK_ELEMENT_NAMES.has(element.name);
-  });
-}
-
-function normalizeInlineMarkdown(value: string): string {
-  return value.replace(/\s+/gu, ' ').replace(/\s*<br>\s*/gu, '<br>').trim();
+function normalizePlainRubric(value: string): string {
+  return value
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join('\n')
+    .trim();
 }
 
 function extractPromptFromXml(
@@ -867,25 +414,9 @@ function extractPromptFromXml(
     return undefined;
   }
 
-  const context = createMarkdownRenderContext(responsesByDeclaration);
-  const promptNodes: XmlRecord[] = [];
-
-  for (const node of itemBody.children) {
-    const element = getOrderedElement(node);
-    if (
-      element !== undefined &&
-      (element.name === 'choiceInteraction' ||
-        element.name === 'extendedTextInteraction' ||
-        element.name === 'rubricBlock')
-    ) {
-      break;
-    }
-
-    promptNodes.push(node);
-  }
-
+  const context = createHtmlRenderContext(responsesByDeclaration);
   return {
-    prompt: renderOrderedMarkdownBlocks(promptNodes, context),
+    prompt: serializeOrderedHtml(itemBody.children, context).trim(),
     responseIdentifiers: context.responseIdentifiers,
   };
 }
@@ -907,13 +438,13 @@ function extractChoicesFromXml(
     return undefined;
   }
 
-  const context = createMarkdownRenderContext({});
+  const context = createHtmlRenderContext({});
   const choices = interaction.children
     .map((node) => getOrderedElement(node))
     .filter((element): element is OrderedElement => element?.name === 'simpleChoice')
     .map((choice): ParsedQtiChoice => ({
       identifier: readStringAttribute(choice.attrs, '@_identifier') ?? '',
-      text: renderOrderedMarkdownInline(choice.children, context),
+      text: serializeOrderedHtml(choice.children, context).trim(),
     }))
     .filter((choice) => choice.identifier.length > 0);
 
@@ -926,10 +457,21 @@ function extractRubricFromXml(xml: string, options: { view?: string } = {}): str
     return undefined;
   }
 
-  const context = createMarkdownRenderContext({});
   const rubric = findOrderedDescendantElements(item.children, 'rubricBlock')
     .filter((element) => options.view === undefined || hasViewAttribute(element.attrs, options.view))
-    .map((element) => renderOrderedMarkdownBlocks(element.children, context))
+    .flatMap((element) => {
+      if (options.view === 'scorer') {
+        const directChildren = element.children
+          .map((node) => getOrderedElement(node))
+          .filter((child): child is OrderedElement => child !== undefined);
+        const rubricParts = directChildren.length > 0
+          ? directChildren.map((child) => normalizePlainRubric(renderOrderedPlainText(child.children)))
+          : [normalizePlainRubric(renderOrderedPlainText(element.children))];
+        return rubricParts;
+      }
+
+      return [serializeOrderedHtml(element.children, createHtmlRenderContext({})).trim()];
+    })
     .filter((value) => value.length > 0);
 
   return rubric.length > 0 ? rubric : undefined;
@@ -963,10 +505,9 @@ function extractFeedbackFromXml(xml: string): string[] | undefined {
     return undefined;
   }
 
-  const context = createMarkdownRenderContext({});
   const feedback = findOrderedChildElements(item.children, 'modalFeedback')
     .map((element) => findOrderedChildElement(element.children, 'contentBody') ?? element)
-    .map((element) => renderOrderedMarkdownBlocks(element.children, context))
+    .map((element) => serializeOrderedHtml(element.children, createHtmlRenderContext({})).trim())
     .filter((value) => value.length > 0);
 
   return feedback.length > 0 ? feedback : undefined;
@@ -1060,6 +601,66 @@ function findAssessmentTimeLimitSeconds(assessmentNode: XmlRecord): number | und
   return undefined;
 }
 
+function extractCorrectResponses(itemNode: XmlRecord): string[] {
+  return extractResponseDeclarations(itemNode).flatMap((declaration) => declaration.values);
+}
+
+function extractResponseDeclarations(itemNode: XmlRecord): ParsedResponseDeclaration[] {
+  const declarations = asArray(itemNode.responseDeclaration)
+    .filter((value): value is XmlRecord => !!value && typeof value === 'object' && !Array.isArray(value));
+
+  const parsedDeclarations: ParsedResponseDeclaration[] = [];
+
+  for (const declaration of declarations) {
+    const declarationId = readStringAttribute(declaration, '@_identifier');
+    if (!declarationId) {
+      continue;
+    }
+
+    const correctResponse = declaration.correctResponse;
+    if (!correctResponse || typeof correctResponse !== 'object' || Array.isArray(correctResponse)) {
+      continue;
+    }
+
+    const valueNode = (correctResponse as XmlRecord).value;
+    const values: string[] = [];
+
+    for (const value of asArray(valueNode)) {
+      const text = getTextContent(value).trim();
+      if (text) {
+        values.push(text);
+      }
+    }
+
+    if (values.length > 0) {
+      const interpretationKind = readStringAttribute(declaration, '@_interpretation') === 'regex' ? 'regex' : 'exact';
+      const kind =
+        interpretationKind === 'regex' ||
+        (values.length === 1 && values[0]!.length >= 2 && values[0]!.startsWith('/') && values[0]!.endsWith('/'))
+          ? 'regex'
+          : 'exact';
+
+      parsedDeclarations.push({
+        identifier: declarationId,
+        values: kind === 'regex' ? values.map((value) => value.replace(/^\/(.+)\/$/u, '$1')) : values,
+        kind,
+      });
+    }
+  }
+
+  return parsedDeclarations;
+}
+
+function extractCorrectResponsesByDeclaration(itemNode: XmlRecord): Record<string, ParsedResponseDeclaration> {
+  const map: Record<string, ParsedResponseDeclaration> = {};
+
+  for (const declaration of extractResponseDeclarations(itemNode)) {
+    map[declaration.identifier] = declaration;
+  }
+
+  return map;
+}
+
 function extractRubric(itemNode: XmlRecord): string[] {
   return asArray(itemNode.rubricBlock)
     .map((node) => getTextContent(node).trim())
@@ -1113,7 +714,6 @@ export function parseAssessmentItemXml(xml: string): ParsedQtiItem {
   }
 
   const title = readStringAttribute(itemNode, '@_title') ?? '';
-
   const itemBody = asRecord(itemNode.itemBody, 'Invalid qti-assessment-item XML: missing itemBody.');
   const { key: interactionKey, interaction } = findInteraction(itemBody);
   const interactionType = inferInteractionType(interactionKey);
@@ -1150,9 +750,9 @@ export function parseAssessmentItemXml(xml: string): ParsedQtiItem {
     identifier,
     title,
     interactionType,
-    prompt: richPrompt && richPrompt.prompt.length > 0 ? richPrompt.prompt : extractPrompt(itemBody),
+    prompt: richPrompt?.prompt ?? '',
     timeLimitSeconds: parseTimeLimitSeconds(itemNode),
-    choices: choices ?? extractChoices(interaction, interactionType),
+    choices: choices ?? [],
     correctResponses: extractCorrectResponses(itemNode),
     blanks,
     rubric: rubric ?? extractRubric(itemNode),

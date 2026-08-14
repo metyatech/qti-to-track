@@ -8,9 +8,9 @@
   <itemBody>
     <p>What is 1 + 1?</p>
     <choiceInteraction responseIdentifier="RESPONSE" maxChoices="1">
-      <simpleChoice identifier="CHOICE_1">1</simpleChoice>
-      <simpleChoice identifier="CHOICE_2">2</simpleChoice>
-      <simpleChoice identifier="CHOICE_3">3</simpleChoice>
+      <simpleChoice identifier="CHOICE_1"><span class="choice-number" data-choice="one">1</span></simpleChoice>
+      <simpleChoice identifier="CHOICE_2"><span style="font-weight: bold;" class="choice-number" data-choice="two">2</span></simpleChoice>
+      <simpleChoice identifier="CHOICE_3"><span class="choice-number" data-choice="three">3</span></simpleChoice>
     </choiceInteraction>
   </itemBody>
   <modalFeedback identifier="correct" outcomeIdentifier="FEEDBACK" showHide="show">2 is correct.</modalFeedback>

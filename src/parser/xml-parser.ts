@@ -78,21 +78,6 @@ export function getTextContent(node: unknown): string {
       continue;
     }
 
-    if (key === 'img' || key === 'qti-img') {
-      const imgNodes = Array.isArray(value) ? value : [value];
-      for (const imgNode of imgNodes) {
-        if (imgNode && typeof imgNode === 'object') {
-          const record = imgNode as Record<string, unknown>;
-          const src = typeof record['@_src'] === 'string' ? record['@_src'] : '';
-          const alt = typeof record['@_alt'] === 'string' ? record['@_alt'] : '';
-          if (src) {
-            chunks.push(`![${alt}](${src})`);
-          }
-        }
-      }
-      continue;
-    }
-
     if (key.startsWith('@_')) {
       continue;
     }

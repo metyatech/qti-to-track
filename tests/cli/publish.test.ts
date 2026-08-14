@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 const execFileAsync = promisify(execFile);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const fixtureDir = resolve(repoRoot, 'test/fixtures/markdown-to-qti');
+const fixtureDir = resolve(repoRoot, 'test/fixtures/canonical-qti');
 const cliPath = resolve(repoRoot, 'dist/cli/index.js');
 
 async function runPublish(args: string[]) {

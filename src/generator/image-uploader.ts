@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
+import { DOMParser, XMLSerializer, type Node } from '@xmldom/xmldom';
 import type {
   TrackChoicePayload,
   TrackImageDimensions,
@@ -15,7 +16,6 @@ interface TrackApiClientUpload {
   ): Promise<string>;
 }
 
-const MARKDOWN_IMAGE_REGEX = /!\[([^\]]*)\]\(([^)]+)\)/g;
 const PNG_SIGNATURE = Buffer.from([
   0x89,
   0x50,
@@ -48,19 +48,31 @@ async function replaceImagesInText(
   apiClient: TrackApiClientUpload,
   uploadCache: Map<string, string>
 ): Promise<string> {
-  if (!text) {
-    return '';
+  if (!text || !/<img(?:\s|>)/iu.test(text)) {
+    return text ?? '';
   }
 
-  let result = text;
-  const matches = [...text.matchAll(MARKDOWN_IMAGE_REGEX)];
-  
-  for (const match of matches) {
-    const fullMatch = match[0];
-    const alt = match[1];
-    const src = match[2];
+  const parser = new DOMParser({
+    onError(_level, message) {
+      throw new Error(`Invalid canonical HTML fragment: ${message}`);
+    },
+  });
+  const serializer = new XMLSerializer();
+  const document = parser.parseFromString(`<root>${text}</root>`, 'application/xml');
+  const root = document.documentElement;
+  if (root === null) {
+    throw new Error('Invalid canonical HTML fragment: missing root element.');
+  }
+  const images = root.getElementsByTagName('img');
 
-    if (!src || src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:')) {
+  for (let index = 0; index < images.length; index += 1) {
+    const image = images.item(index);
+    if (image === null) {
+      continue;
+    }
+
+    const src = image.getAttribute('src');
+    if (src === null || shouldPreserveImageSource(src)) {
       continue;
     }
 
@@ -82,12 +94,14 @@ async function replaceImagesInText(
       uploadCache.set(localPath, remoteUrl);
     }
 
-    if (remoteUrl) {
-      result = result.replace(fullMatch, `![${alt}](${remoteUrl})`);
-    }
+    image.setAttribute('src', remoteUrl);
   }
 
-  return result;
+  return Array.from(root.childNodes, (node: Node) => serializer.serializeToString(node)).join('');
+}
+
+function shouldPreserveImageSource(src: string): boolean {
+  return /^(?:[a-z][a-z\d+.-]*:|\/\/)/iu.test(src) || isAbsolute(src);
 }
 
 function readImageDimensions(

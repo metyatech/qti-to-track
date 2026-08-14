@@ -60,6 +60,7 @@
   },
   "dependencies": {
     "@metyatech/track-tcm-api-client": "git+https://github.com/metyatech/track-tcm-api-client.git#28c15c58e28efe44b6f4d42b9c7195a3ab54cf29",
+    "@xmldom/xmldom": "^0.9.11",
     "commander": "^14.0.3",
     "fast-xml-parser": "^5.8.0",
     "yaml": "^2.9.0"

@@ -6,18 +6,18 @@ Converts a QTI XML package into Track API JSON payloads, and can publish them di
 
 `qti-to-track` reads a QTI 3.0 package directory (assessment XML plus item XML files), parses it, and produces structured Track draft JSON. It can also directly publish those questions, create a Track material from the resulting Track question IDs, and release the material.
 
-**This repo does not parse source Markdown.** The only Markdown parser/compiler in this pipeline is [`markdown-to-qti`](https://github.com/metyatech/markdown-to-qti). The expected workflow is:
+The presentation pipeline is intentionally HTML-native:
 
 ```
-Markdown    markdown-to-qti    QTI package    qti-to-track    Track payloads / Track LMS
+QTI XML    ordered presentation tree    HTML    Track payloads / Track LMS
 ```
 
-`qti-to-track` takes over at the QTI package step. It serializes QTI presentation elements into rich text for Track, preserving headings, paragraphs, blockquotes, lists, code, emphasis, strikethrough, links, images, horizontal rules, and tables. Parsed QTI keeps headings as Markdown; Track payloads encode those headings with Track's supported `h1`-`h6` HTML elements because Track's API compiler reserves Markdown heading lines for its own question subsections. Table column alignment is derived from `text-align` styles. Inline QTI `br` elements in question bodies, choices, feedback, rubrics, and table cells are represented with `<br>`; ordinary XML formatting whitespace and newlines remain ordinary spaces. Table delimiters are escaped, and unsupported row or column spans fail explicitly instead of producing a corrupted table.
+`qti-to-track` serializes the ordered QTI presentation tree directly to XML-well-formed HTML fragments. Ordinary display content uses bare HTML tags; QTI interactions and metadata use the QTI structural tags. Question content, choices, and `howToSolve` remain HTML-rich text, including authored attributes, images, headings, tables, lists, links, and nested markup inside `pre`/`code`. Markdown syntax is not interpreted.
 
 ## Requirements
 
 - Node.js 20+
-- A QTI 3.0 package directory produced by `markdown-to-qti`
+- A QTI 3.0 package directory containing canonical HTML presentation content
 
 ## Installation
 
@@ -124,7 +124,7 @@ qti-to-track publish --qti-dir ./my-qti-package --yes --track-map ./track-map.ya
 
 Dry-run behavior: without `--yes`, QTI parsing and payload generation run without Track credentials. A plain dry-run reports, per question, whether it would update a track-map-mapped record by ID or create a new one. Credentials are required in dry-run only when an option needs the Track API, such as `--upload-images`, `--adopt-existing-by-title`, or `--check-existing`. `--check-existing` performs Track API title-duplicate lookups (for unmapped items) even in dry-run and fails closed on exact-title question or material duplicates. `--adopt-existing-by-title` instead treats a matching title as an update target for an unmapped item, and real publish updates that existing Track record. A plain real publish (no title flags) updates mapped items by ID and creates unmapped items; it performs no title lookup and never overwrites by title.
 
-When `--upload-images` is used, qti-to-track reads each local image's original dimensions and sends them to the Track upload-signature API. If a local image's dimensions cannot be determined, publish fails instead of leaving a local path in Track content.
+When `--upload-images` is used, qti-to-track walks canonical HTML `<img src="...">` elements, reads each local image's original dimensions, and sends them to the Track upload-signature API. Remote, protocol-relative, and data URLs remain unchanged. If a local image's dimensions cannot be determined, publish fails instead of leaving a local path in Track content.
 
 ## Track-map compatibility
 
@@ -183,14 +183,14 @@ does not expose dedicated fields for per-question scoring criteria. The footer
 uses a collapsed HTML details block:
 
 ```html
----
+<hr />
 
 <details>
 <summary><strong>採点基準（最大点: 3点）</strong></summary>
 
-[2点] Mentions nucleus
+<p>[2点] Mentions nucleus</p>
 
-[1点] Mentions cell
+<p>[1点] Mentions cell</p>
 
 </details>
 ```

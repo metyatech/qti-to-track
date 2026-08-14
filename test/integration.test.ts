@@ -6,7 +6,7 @@ import { loadQtiPackage, parseQtiPackageFromXml, toTrackPayloads } from '../src/
 import { toTrackMaterialPayload } from '../src/publish/publisher.js';
 
 const testDir = dirname(fileURLToPath(import.meta.url));
-const fixtureDir = resolve(testDir, 'fixtures/markdown-to-qti');
+const fixtureDir = resolve(testDir, 'fixtures/canonical-qti');
 const movieTicketRichContentFixture = resolve(testDir, 'fixtures/movie-ticket-rich-content.qti.xml');
 
 function buildChoiceItemXml(identifier: string, maxTime: string): string {
@@ -28,11 +28,11 @@ function buildPayloadMinutes(assessmentXml: string, itemXmlByIdentifier: Record<
   return toTrackPayloads(parsed).materialDraft.basicTimeMinutes;
 }
 
-describe('integration: markdown-to-qti fixtures', () => {
-  it('loads markdown-to-qti fixture package from directory', async () => {
+describe('integration: canonical QTI fixtures', () => {
+  it('loads canonical QTI fixture package from directory', async () => {
     const parsed = await loadQtiPackage(fixtureDir);
 
-    expect(parsed.assessment.identifier).toBe('md2qti-sample-test');
+    expect(parsed.assessment.identifier).toBe('canonical-qti-sample-test');
     expect(parsed.items).toHaveLength(3);
     expect(parsed.itemsByIdentifier['choice-item']?.interactionType).toBe('choice');
     expect(parsed.itemsByIdentifier['cloze-item']?.interactionType).toBe('text-entry');
@@ -43,16 +43,16 @@ describe('integration: markdown-to-qti fixtures', () => {
     const parsed = await loadQtiPackage(fixtureDir);
     const payload = toTrackPayloads(parsed);
 
-    expect(payload.materialDraft.title).toBe('Markdown to QTI Sample Test');
+    expect(payload.materialDraft.title).toBe('Canonical QTI Sample Test');
     expect(payload.materialDraft.questionKeys).toEqual(['choice-item', 'cloze-item', 'descriptive-item']);
     expect(payload.materialDraft.materialTypes).toEqual(['others']);
 
     const choiceQuestion = payload.questions.find((question) => question.title === 'Choice Item');
     expect(choiceQuestion?.questionKind).toBe(1);
     expect(choiceQuestion?.choices).toEqual([
-      { content: '1', correct: false },
-      { content: '2', correct: true },
-      { content: '3', correct: false },
+      { content: '<span class="choice-number" data-choice="one">1</span>', correct: false },
+      { content: '<span style="font-weight: bold;" class="choice-number" data-choice="two">2</span>', correct: true },
+      { content: '<span class="choice-number" data-choice="three">3</span>', correct: false },
     ]);
 
     const clozeQuestion = payload.questions.find((question) => question.title === 'Cloze Item');
@@ -66,20 +66,29 @@ describe('integration: markdown-to-qti fixtures', () => {
     expect(descriptiveQuestion?.questionKind).toBe(3);
     expect(descriptiveQuestion?.choices).toBeUndefined();
     expect(descriptiveQuestion?.blanks).toBeUndefined();
-    expect(descriptiveQuestion?.content).toBe([
-      'Explain the diagram below. ![Cell diagram](assets/diagram.png)',
-      '',
-      '---',
-      '',
-      '<details>',
-      '<summary><strong>採点基準（最大点: 3点）</strong></summary>',
-      '',
-      '[2点] Mentions nucleus',
-      '',
-      '[1点] Mentions cell',
-      '',
-      '</details>',
-    ].join('\n'));
+    expect(descriptiveQuestion?.content).toContain('<p>Explain the diagram below. <img src="assets/diagram.png" alt="Cell diagram" /></p>');
+    expect(descriptiveQuestion?.content).toContain('<hr />');
+    expect(descriptiveQuestion?.content).toContain('<details>');
+    expect(descriptiveQuestion?.content).toContain('<summary><strong>採点基準（最大点: 3点）</strong></summary>');
+    expect(descriptiveQuestion?.content).toContain('<p>[2点] Mentions nucleus</p>');
+    expect(descriptiveQuestion?.content).toContain('<p>[1点] Mentions cell</p>');
+    expect(descriptiveQuestion?.content).not.toContain('---');
+    expect(descriptiveQuestion?.howToSolve).toBe('<p class="explanation">It is a <em>plant</em> cell.</p>');
+  });
+
+  it('escapes scorer rubric text inside the HTML scoring footer', () => {
+    const parsed = parseQtiPackageFromXml({
+      assessmentXml: '<assessmentTest identifier="footer-assessment"><testPart><assessmentSection><assessmentItemRef identifier="footer-question" href="footer-question.xml" /></assessmentSection></testPart></assessmentTest>',
+      itemXmlByIdentifier: {
+        'footer-question': '<assessmentItem identifier="footer-question" title="Footer"><outcomeDeclaration identifier="MAXSCORE" cardinality="single" baseType="float"><defaultValue><value>1</value></defaultValue></outcomeDeclaration><itemBody><p>Question</p><extendedTextInteraction responseIdentifier="RESPONSE" /><rubricBlock view="scorer"><p>[1] Use &lt;tag&gt; &amp; safe text</p></rubricBlock></itemBody></assessmentItem>',
+      },
+    });
+
+    const content = toTrackPayloads(parsed).questions[0]?.content;
+    expect(content).toContain('<hr />');
+    expect(content).toContain('<details>');
+    expect(content).toContain('<p>[1点] Use &lt;tag&gt; &amp; safe text</p>');
+    expect(content).not.toContain('<p>[1点] Use <tag>');
   });
 
   it('preserves QTI inline line breaks in Track question payloads', () => {
@@ -100,14 +109,14 @@ describe('integration: markdown-to-qti fixtures', () => {
           </correctResponse>
         </responseDeclaration>
         <itemBody>
-          <p>本文1<qti-br/>本文2</p>
+          <p>本文1<br/>本文2</p>
           <choiceInteraction responseIdentifier="RESPONSE" maxChoices="1">
-            <simpleChoice identifier="CHOICE_1">選択肢1<qti-br/>選択肢2</simpleChoice>
+            <simpleChoice identifier="CHOICE_1">選択肢1<br/>選択肢2</simpleChoice>
           </choiceInteraction>
         </itemBody>
         <modalFeedback identifier="EXPLANATION" outcomeIdentifier="FEEDBACK" showHide="show">
           <contentBody>
-            <p>解説1<qti-br/>解説2</p>
+            <p>解説1<br/>解説2</p>
           </contentBody>
         </modalFeedback>
       </assessmentItem>
@@ -119,26 +128,26 @@ describe('integration: markdown-to-qti fixtures', () => {
     });
     const question = toTrackPayloads(parsed).questions[0];
 
-    expect(question?.content).toContain('本文1<br>本文2');
-    expect(question?.choices).toEqual([{ content: '選択肢1<br>選択肢2', correct: true }]);
-    expect(question?.howToSolve).toContain('解説1<br>解説2');
+    expect(question?.content).toContain('<p>本文1<br />本文2</p>');
+    expect(question?.choices).toEqual([{ content: '選択肢1<br />選択肢2', correct: true }]);
+    expect(question?.howToSolve).toContain('<p>解説1<br />解説2</p>');
   });
 
   it('keeps exam demo URLs in generated Track question payloads', () => {
     const demoUrl = 'https://course-exam-demos.vercel.app/f21f43d1df7547c4/';
     const assessmentXml = `
-      <qti-assessment-test identifier="demo-assessment" title="Demo Assessment">
+      <assessment-test identifier="demo-assessment" title="Demo Assessment">
         <qti-test-part identifier="test-part">
-          <qti-assessment-section identifier="section">
-            <qti-assessment-item-ref identifier="demo-question" href="demo-question.qti.xml" />
+          <assessment-section identifier="section">
+            <assessment-item-ref identifier="demo-question" href="demo-question.qti.xml" />
           </qti-assessment-section>
         </qti-test-part>
       </qti-assessment-test>
     `;
     const itemXml = `
-      <qti-assessment-item identifier="demo-question" title="Demo Question">
+      <assessment-item identifier="demo-question" title="Demo Question">
         <qti-item-body>
-          <qti-p><qti-a href="${demoUrl}">完成見本を開く</qti-a></qti-p>
+          <p><a href="${demoUrl}">完成見本を開く</a></p>
           <qti-extended-text-interaction response-identifier="RESPONSE" />
         </qti-item-body>
       </qti-assessment-item>
@@ -150,17 +159,17 @@ describe('integration: markdown-to-qti fixtures', () => {
     });
     const payload = toTrackPayloads(parsed);
 
-    expect(parsed.items[0]?.prompt).toBe(`[完成見本を開く](${demoUrl})`);
-    expect(payload.questions[0]?.content).toBe(`[完成見本を開く](${demoUrl})`);
+    expect(parsed.items[0]?.prompt).toBe(`<p><a href="${demoUrl}">完成見本を開く</a></p>`);
+    expect(payload.questions[0]?.content).toBe(`<p><a href="${demoUrl}">完成見本を開く</a></p>`);
   });
 
-  it('keeps movie ticket prompt structure and emits Track-safe payload headings', async () => {
+  it('keeps movie ticket prompt structure as canonical HTML', async () => {
     const itemXml = await readFile(movieTicketRichContentFixture, 'utf8');
     const assessmentXml = `
-      <qti-assessment-test identifier="movie-ticket-assessment" title="Movie Ticket Assessment">
+      <assessment-test identifier="movie-ticket-assessment" title="Movie Ticket Assessment">
         <qti-test-part identifier="test-part">
-          <qti-assessment-section identifier="section">
-            <qti-assessment-item-ref identifier="movie-ticket-calculator" href="movie-ticket-calculator.qti.xml" />
+          <assessment-section identifier="section">
+            <assessment-item-ref identifier="movie-ticket-calculator" href="movie-ticket-calculator.qti.xml" />
           </qti-assessment-section>
         </qti-test-part>
       </qti-assessment-test>
@@ -173,54 +182,46 @@ describe('integration: markdown-to-qti fixtures', () => {
     const payload = toTrackPayloads(parsed);
     const prompt = parsed.items[0]?.prompt ?? '';
 
-    expect(prompt).toContain('### 完成見本');
-    expect(prompt).toContain('### 完成させる機能');
-    expect(prompt).toContain('### 料金');
-    expect(prompt).toContain('### 動作確認の例');
-    expect(prompt).toContain('| 項目 | 料金 |');
-    expect(prompt).toContain('| --- | ---: |');
-    expect(prompt).toContain('| 選択内容 | 表示内容 | 合計金額 | 結果欄のクラス |');
-    expect(prompt).toContain('| --- | --- | ---: | --- |');
-    expect(prompt).toContain('[完成見本を開く](https://course-exam-demos.vercel.app/f21f43d1df7547c4/)');
-    expect(prompt).toContain('1. ページを開いたとき、3種類の映画名と基本価格を一覧表示する。');
-    expect(prompt).toContain('`result-box action`');
     expect(payload.questions[0]?.content).toContain('<h3>完成見本</h3>');
     expect(payload.questions[0]?.content).toContain('<h3>完成させる機能</h3>');
     expect(payload.questions[0]?.content).toContain('<h3>料金</h3>');
     expect(payload.questions[0]?.content).toContain('<h3>動作確認の例</h3>');
     expect(payload.questions[0]?.content).not.toContain('### 完成見本');
-    expect(payload.questions[0]?.content).toContain('| 項目 | 料金 |');
-    expect(payload.questions[0]?.content).toContain('| --- | ---: |');
+    expect(prompt).toContain('<table>');
+    expect(prompt).toContain('<th style="text-align: right;">料金</th>');
+    expect(prompt).toContain('<code>result-box action</code>');
+    expect(payload.questions[0]?.content).not.toContain('### 完成見本');
+    expect(payload.questions[0]?.content).not.toContain('| 項目 | 料金 |');
   });
 
-  it('encodes QTI headings as Track-safe HTML without altering fenced code or feedback structure', () => {
+  it('preserves headings, code text, and rich feedback as HTML', () => {
     const assessmentXml = `
-      <qti-assessment-test identifier="heading-assessment" title="Heading Assessment">
+      <assessment-test identifier="heading-assessment" title="Heading Assessment">
         <qti-test-part identifier="test-part">
-          <qti-assessment-section identifier="section">
-            <qti-assessment-item-ref identifier="heading-question" href="heading-question.qti.xml" />
+          <assessment-section identifier="section">
+            <assessment-item-ref identifier="heading-question" href="heading-question.qti.xml" />
           </qti-assessment-section>
         </qti-test-part>
       </qti-assessment-test>
     `;
     const itemXml = `
-      <qti-assessment-item identifier="heading-question" title="Heading Question">
+      <assessment-item identifier="heading-question" title="Heading Question">
         <qti-item-body>
-          <qti-h1>見出し1</qti-h1>
-          <qti-h2>見出し2</qti-h2>
-          <qti-h3>見出し3</qti-h3>
-          <qti-h4>見出し4</qti-h4>
-          <qti-h5>見出し5</qti-h5>
-          <qti-h6>見出し6</qti-h6>
-          <qti-pre><qti-code>### コード内の見出し記号</qti-code></qti-pre>
+          <h1>見出し1</h1>
+          <h2>見出し2</h2>
+          <h3>見出し3</h3>
+          <h4>見出し4</h4>
+          <h5>見出し5</h5>
+          <h6>見出し6</h6>
+          <pre><code>### コード内の見出し記号</code></pre>
           <qti-extended-text-interaction response-identifier="RESPONSE" />
         </qti-item-body>
         <qti-modal-feedback identifier="EXPLANATION" outcome-identifier="FEEDBACK" show-hide="show">
-          <qti-h3>解説見出し</qti-h3>
-          <qti-table>
-            <qti-thead><qti-tr><qti-th>項目</qti-th><qti-th>値</qti-th></qti-tr></qti-thead>
-            <qti-tbody><qti-tr><qti-td>A</qti-td><qti-td>B</qti-td></qti-tr></qti-tbody>
-          </qti-table>
+          <h3>解説見出し</h3>
+          <table>
+            <thead><tr><th>項目</th><th>値</th></tr></thead>
+            <tbody><tr><td>A</td><td>B</td></tr></tbody>
+          </table>
         </qti-modal-feedback>
       </qti-assessment-item>
     `;
@@ -231,16 +232,16 @@ describe('integration: markdown-to-qti fixtures', () => {
     });
     const question = toTrackPayloads(parsed).questions[0];
 
-    expect(parsed.items[0]?.prompt).toContain('### 見出し3');
+    expect(parsed.items[0]?.prompt).toContain('<h3>見出し3</h3>');
     expect(question?.content).toContain('<h1>見出し1</h1>');
     expect(question?.content).toContain('<h2>見出し2</h2>');
     expect(question?.content).toContain('<h3>見出し3</h3>');
     expect(question?.content).toContain('<h4>見出し4</h4>');
     expect(question?.content).toContain('<h5>見出し5</h5>');
     expect(question?.content).toContain('<h6>見出し6</h6>');
-    expect(question?.content).toContain('```\n### コード内の見出し記号\n```');
+    expect(question?.content).toContain('<pre><code>### コード内の見出し記号</code></pre>');
     expect(question?.howToSolve).toContain('<h3>解説見出し</h3>');
-    expect(question?.howToSolve).toContain('| 項目 | 値 |');
+    expect(question?.howToSolve).toContain('<table>');
   });
 
   it('rounds material basicTimeMinutes up from fixture section time limit', async () => {
