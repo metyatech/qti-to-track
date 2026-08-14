@@ -42,6 +42,37 @@ const INTERACTION_KEYS = [
   'extendedTextInteraction',
 ] as const;
 
+const RETIRED_PRESENTATION_TAG_NAMES = new Set([
+  'qti-p',
+  'qti-h1',
+  'qti-h2',
+  'qti-h3',
+  'qti-h4',
+  'qti-h5',
+  'qti-h6',
+  'qti-div',
+  'qti-em',
+  'qti-strong',
+  'qti-del',
+  'qti-a',
+  'qti-blockquote',
+  'qti-ul',
+  'qti-ol',
+  'qti-li',
+  'qti-pre',
+  'qti-code',
+  'qti-table',
+  'qti-thead',
+  'qti-tbody',
+  'qti-tfoot',
+  'qti-tr',
+  'qti-th',
+  'qti-td',
+  'qti-img',
+  'qti-br',
+  'qti-hr',
+]);
+
 const VOID_HTML_ELEMENTS = new Set([
   'area',
   'base',
@@ -100,11 +131,16 @@ function asRecords(value: unknown): XmlRecord[] {
 
 function normalizePresentationTagName(rawName: string): string {
   const localName = rawName.split(':').pop() ?? rawName;
+  if (RETIRED_PRESENTATION_TAG_NAMES.has(localName)) {
+    throw new Error(`Retired QTI presentation element is not supported: ${localName}`);
+  }
+
   const stripped = localName.replace(/^qti-/, '');
   return stripped.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
 }
 
 function toOrderedElement(element: XmlElement): OrderedElement {
+  const name = normalizePresentationTagName(element.localName || element.tagName);
   const attrs: XmlRecord = {};
   for (let index = 0; index < element.attributes.length; index += 1) {
     const attribute = element.attributes.item(index);
@@ -129,7 +165,7 @@ function toOrderedElement(element: XmlElement): OrderedElement {
 
   return {
     type: 'element',
-    name: normalizePresentationTagName(element.localName || element.tagName),
+    name,
     children,
     attrs,
   };

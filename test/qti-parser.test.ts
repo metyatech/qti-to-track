@@ -8,6 +8,39 @@ import {
 import { parseXml } from '../src/parser/xml-parser.js';
 import { toTrackPayloads } from '../src/generator/track-generator.js';
 
+const RETIRED_PRESENTATION_ALIASES = [
+  'qti-p',
+  'qti-h1',
+  'qti-h2',
+  'qti-h3',
+  'qti-h4',
+  'qti-h5',
+  'qti-h6',
+  'qti-div',
+  'qti-em',
+  'qti-strong',
+  'qti-del',
+  'qti-a',
+  'qti-blockquote',
+  'qti-ul',
+  'qti-ol',
+  'qti-li',
+  'qti-pre',
+  'qti-code',
+  'qti-table',
+  'qti-thead',
+  'qti-tbody',
+  'qti-tfoot',
+  'qti-tr',
+  'qti-th',
+  'qti-td',
+  'qti-img',
+  'qti-br',
+  'qti-hr',
+] as const;
+
+const VOID_RETIRED_PRESENTATION_ALIASES = new Set(['qti-img', 'qti-br', 'qti-hr']);
+
 describe('xml-parser', () => {
   it('normalizes QTI namespace prefixes for structural nodes', () => {
     const parsed = parseXml(`
@@ -41,6 +74,44 @@ describe('qti-parser', () => {
       { identifier: 'ITEM-1', href: 'items/item1.xml' },
       { identifier: 'ITEM-2', href: 'items/item2.xml' },
     ]);
+  });
+
+  it.each(RETIRED_PRESENTATION_ALIASES)('rejects retired presentation alias %s', (alias) => {
+    const presentation = VOID_RETIRED_PRESENTATION_ALIASES.has(alias)
+      ? `<${alias} />`
+      : `<${alias}>retired</${alias}>`;
+
+    expect(() => parseAssessmentItemXml(`
+      <qti-assessment-item identifier="RETIRED-${alias}" title="Retired alias">
+        <qti-item-body>${presentation}<qti-extended-text-interaction responseIdentifier="RESPONSE" /></qti-item-body>
+      </qti-assessment-item>
+    `)).toThrow(`Retired QTI presentation element is not supported: ${alias}`);
+  });
+
+  it('rejects nested retired qti-pre and qti-code presentation aliases', () => {
+    expect(() => parseAssessmentItemXml(`
+      <qti-assessment-item identifier="RETIRED-NESTED" title="Retired aliases">
+        <qti-item-body><qti-pre><qti-code>body</qti-code></qti-pre><qti-extended-text-interaction responseIdentifier="RESPONSE" /></qti-item-body>
+      </qti-assessment-item>
+    `)).toThrow('Retired QTI presentation element is not supported: qti-pre');
+  });
+
+  it('rejects the retired qti-img presentation alias', () => {
+    expect(() => parseAssessmentItemXml(`
+      <qti-assessment-item identifier="RETIRED-IMG" title="Retired alias">
+        <qti-item-body><qti-img /><qti-extended-text-interaction responseIdentifier="RESPONSE" /></qti-item-body>
+      </qti-assessment-item>
+    `)).toThrow('Retired QTI presentation element is not supported: qti-img');
+  });
+
+  it('accepts canonical bare HTML presentation elements', () => {
+    const parsed = parseAssessmentItemXml(`
+      <qti-assessment-item identifier="CANONICAL-HTML" title="Canonical HTML">
+        <qti-item-body><p>Paragraph</p><pre><code>code</code></pre><img src="image.png" alt="Image" /><br /><hr /><qti-extended-text-interaction responseIdentifier="RESPONSE" /></qti-item-body>
+      </qti-assessment-item>
+    `);
+
+    expect(parsed.prompt).toBe('<p>Paragraph</p><pre><code>code</code></pre><img src="image.png" alt="Image" /><br /><hr />');
   });
 
   it('serializes ordered presentation HTML, attributes, headings, and links without Markdown conversion', () => {
