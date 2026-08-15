@@ -144,7 +144,7 @@ describe('qti-parser', () => {
     `);
 
     expect(parsed.prompt).toBe(
-      '<pre><code>  foo <span style="color:red" class="token">A</span> ${answer} bar\n</code></pre>',
+      '<pre><code>  foo <span style="color:red" class="token">A</span> ${answer} bar<br /></code></pre>',
     );
     expect(parsed.blanks).toEqual([
       { responseIdentifier: 'RESPONSE', answer: 'answer', kind: 'exact' },
@@ -159,13 +159,13 @@ describe('qti-parser', () => {
     const content = toTrackContent('ENTITY', `<qti-assessment-item identifier="ENTITY" title="Entities"><qti-item-body><pre><code>${encodedSource}</code></pre><qti-extended-text-interaction response-identifier="RESPONSE" /></qti-item-body></qti-assessment-item>`);
     const expectedSource = '<html>\n<body>\nfoo & bar\n</body>\n</html>';
 
-    expect(content).toContain('<pre><code>&lt;html&gt;\n&lt;body&gt;\nfoo &amp; bar\n&lt;/body&gt;\n&lt;/html&gt;</code></pre>');
+    expect(content).toContain('<pre><code>&lt;html&gt;<br />&lt;body&gt;<br />foo &amp; bar<br />&lt;/body&gt;<br />&lt;/html&gt;</code></pre>');
     expect(content).not.toContain('&amp;#x3C;');
     expect(content).not.toContain('&amp;#60;');
     expect(content).not.toContain('&amp;lt;');
 
     const document = parseTrackHtml(content);
-    expect(document.getElementsByTagName('code').item(0)?.textContent).toBe(expectedSource);
+    expect(renderPreformattedText(document.getElementsByTagName('code').item(0))).toBe(expectedSource);
   });
 
   it('preserves escaped HTML around the official q18-style span, its style, quoted attributes, and Unicode', () => {
@@ -179,10 +179,34 @@ describe('qti-parser', () => {
     expect(span?.getAttribute('title')).toBe('"quoted"');
     expect(span?.getAttribute('data-label')).toBe('日本語');
     expect(span?.textContent).toBe('A');
-    expect(code?.textContent).toBe('<div id="content">\n    document.getElementById("content"). A = "2em";\n</div>');
+    expect(renderPreformattedText(code)).toBe('<div id="content">\n    document.getElementById("content"). A = "2em";\n</div>');
     expect(content).not.toContain('&#x3C;');
     expect(content).not.toContain('&#60;');
     expect(content).not.toContain('&amp;lt;');
+  });
+
+  it('converts only preformatted text-node line endings to Track line breaks', () => {
+    const content = toTrackContent(
+      'PRE-COMPATIBILITY',
+      '<qti-assessment-item identifier="PRE-COMPATIBILITY" title="Pre compatibility"><qti-item-body><p id="ordinary" data-kind="text">ordinary1\nordinary2</p><pre id="snippet" class="example"><code class="language-js" data-language="js">line1\n    indented\nline3</code></pre><pre><code>before\n    <span style="color:red" class="token">A</span>\nafter</code></pre><qti-extended-text-interaction responseIdentifier="RESPONSE" /></qti-item-body></qti-assessment-item>',
+    );
+
+    expect(content).toBe(
+      '<p id="ordinary" data-kind="text">ordinary1\nordinary2</p><pre id="snippet" class="example"><code class="language-js" data-language="js">line1<br />    indented<br />line3</code></pre><pre><code>before<br />    <span style="color:red" class="token">A</span><br />after</code></pre>',
+    );
+
+    const document = parseTrackHtml(content);
+    expect(renderPreformattedText(document.getElementsByTagName('code').item(0))).toBe(
+      'line1\n    indented\nline3',
+    );
+    expect(renderPreformattedText(document.getElementsByTagName('code').item(1))).toBe(
+      'before\n    A\nafter',
+    );
+    expect(document.getElementsByTagName('p').item(0)?.textContent).toBe('ordinary1\nordinary2');
+    expect(document.getElementsByTagName('pre').item(0)?.getAttribute('id')).toBe('snippet');
+    expect(document.getElementsByTagName('pre').item(0)?.getAttribute('class')).toBe('example');
+    expect(document.getElementsByTagName('code').item(0)?.getAttribute('data-language')).toBe('js');
+    expect(document.getElementsByTagName('span').item(0)?.getAttribute('style')).toBe('color:red');
   });
 
   it('keeps rich HTML in choices and feedback', () => {
@@ -275,4 +299,32 @@ function parseTrackHtml(content: string) {
       throw new Error(`Invalid Track HTML fragment in test: ${message}`);
     },
   }).parseFromString(`<root>${content}</root>`, 'application/xml');
+}
+
+interface DomLikeNode {
+  nodeType: number;
+  nodeName: string;
+  nodeValue: string | null;
+  firstChild: DomLikeNode | null;
+  nextSibling: DomLikeNode | null;
+}
+
+function renderPreformattedText(node: unknown): string {
+  if (!node || typeof node !== 'object') {
+    return '';
+  }
+
+  const current = node as DomLikeNode;
+  if (current.nodeType === 3) {
+    return current.nodeValue ?? '';
+  }
+  if (current.nodeType === 1 && current.nodeName === 'br') {
+    return '\n';
+  }
+
+  let result = '';
+  for (let child = current.firstChild; child !== null; child = child.nextSibling) {
+    result += renderPreformattedText(child);
+  }
+  return result;
 }

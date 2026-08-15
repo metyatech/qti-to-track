@@ -34,6 +34,7 @@ type OrderedNode = OrderedElement | OrderedText;
 interface HtmlRenderContext {
   responsesByDeclaration: Record<string, ParsedResponseDeclaration>;
   responseIdentifiers: string[];
+  insidePre: boolean;
 }
 
 const INTERACTION_KEYS = [
@@ -332,6 +333,7 @@ function createHtmlRenderContext(
   return {
     responsesByDeclaration,
     responseIdentifiers: [],
+    insidePre: false,
   };
 }
 
@@ -375,13 +377,22 @@ function serializeOrderedHtml(
   return nodes.map((node) => serializeOrderedHtmlNode(node, context)).join('');
 }
 
+function serializeTrackText(value: string, insidePre: boolean): string {
+  if (!insidePre) {
+    return escapeHtmlText(value);
+  }
+
+  const normalized = value.replace(/\r\n?/gu, '\n');
+  return escapeHtmlText(normalized).replace(/\n/gu, '<br />');
+}
+
 function serializeOrderedHtmlNode(
   node: OrderedNode,
   context: HtmlRenderContext,
 ): string {
   const text = getOrderedText(node);
   if (text !== undefined) {
-    return escapeHtmlText(text);
+    return serializeTrackText(text, context.insidePre);
   }
 
   const element = getOrderedElement(node);
@@ -405,7 +416,9 @@ function serializeOrderedHtmlNode(
         return `${openingTag} />`;
       }
 
-      return `${openingTag}>${serializeOrderedHtml(element.children, context)}</${element.name}>`;
+      const childContext =
+        element.name === 'pre' ? { ...context, insidePre: true } : context;
+      return `${openingTag}>${serializeOrderedHtml(element.children, childContext)}</${element.name}>`;
     }
   }
 }
