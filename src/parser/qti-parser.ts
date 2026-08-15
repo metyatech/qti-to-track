@@ -1,4 +1,5 @@
 import { DOMParser, type Element as XmlElement } from '@xmldom/xmldom';
+import hljs from 'highlight.js';
 import {
   type ParsedBlank,
   type ParsedAssessment,
@@ -377,13 +378,86 @@ function serializeOrderedHtml(
   return nodes.map((node) => serializeOrderedHtmlNode(node, context)).join('');
 }
 
+function normalizePreformattedText(value: string): string {
+  return value.replace(/\r\n?/gu, '\n');
+}
+
 function serializeTrackText(value: string, insidePre: boolean): string {
   if (!insidePre) {
     return escapeHtmlText(value);
   }
 
-  const normalized = value.replace(/\r\n?/gu, '\n');
+  const normalized = normalizePreformattedText(value);
   return escapeHtmlText(normalized).replace(/\n/gu, '<br />');
+}
+
+function readCodeLanguage(attrs: XmlRecord): string | undefined {
+  const className = readStringAttribute(attrs, '@_class');
+  const match = className?.match(/\blang(?:uage)?-([\w-]+)\b/u);
+  return match?.[1];
+}
+
+function hasAuthoredElementChildren(element: OrderedElement): boolean {
+  return element.children.some((child) => child.type === 'element');
+}
+
+function getTextOnlyCodeSource(element: OrderedElement): string | undefined {
+  if (hasAuthoredElementChildren(element)) {
+    return undefined;
+  }
+
+  return element.children
+    .map((child) => (child.type === 'text' ? child.value : ''))
+    .join('');
+}
+
+function parseHtmlFragment(value: string): OrderedNode[] {
+  const document = new DOMParser({
+    onError(_level, message) {
+      throw new Error(`Invalid highlighted HTML fragment: ${message}`);
+    },
+  }).parseFromString(`<track-fragment>${value}</track-fragment>`, 'application/xml');
+  const root = document.documentElement;
+  if (root === null) {
+    return [];
+  }
+
+  const nodes: OrderedNode[] = [];
+  for (let index = 0; index < root.childNodes.length; index += 1) {
+    const child = root.childNodes.item(index);
+    if (child === null) {
+      continue;
+    }
+
+    if (child.nodeType === 1) {
+      nodes.push(toOrderedElement(child as XmlElement));
+    } else if (child.nodeType === 3 || child.nodeType === 4) {
+      nodes.push({ type: 'text', value: child.nodeValue ?? '' });
+    }
+  }
+
+  return nodes;
+}
+
+function serializeHighlightedCode(
+  element: OrderedElement,
+  context: HtmlRenderContext,
+): string {
+  const source = getTextOnlyCodeSource(element);
+  if (source === undefined) {
+    return serializeOrderedHtml(element.children, context);
+  }
+
+  const normalizedSource = normalizePreformattedText(source);
+  const language = readCodeLanguage(element.attrs);
+  if (language === 'plain') {
+    return serializeTrackText(normalizedSource, true);
+  }
+
+  const highlightedHtml = language !== undefined && hljs.getLanguage(language) !== undefined
+    ? hljs.highlight(language, normalizedSource).value
+    : hljs.highlightAuto(normalizedSource).value;
+  return serializeOrderedHtml(parseHtmlFragment(highlightedHtml), { ...context, insidePre: true });
 }
 
 function serializeOrderedHtmlNode(
@@ -418,7 +492,10 @@ function serializeOrderedHtmlNode(
 
       const childContext =
         element.name === 'pre' ? { ...context, insidePre: true } : context;
-      return `${openingTag}>${serializeOrderedHtml(element.children, childContext)}</${element.name}>`;
+      const children = element.name === 'code' && context.insidePre
+        ? serializeHighlightedCode(element, childContext)
+        : serializeOrderedHtml(element.children, childContext);
+      return `${openingTag}>${children}</${element.name}>`;
     }
   }
 }

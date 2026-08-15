@@ -14,6 +14,8 @@ QTI XML    ordered presentation tree    HTML    Track payloads / Track LMS
 
 `qti-to-track` serializes the ordered QTI presentation tree directly to XML-well-formed HTML fragments. Ordinary display content uses bare HTML tags; QTI interactions and metadata use the QTI structural tags. Question content, choices, and `howToSolve` remain HTML-rich text, including authored attributes, images, headings, tables, lists, links, and nested markup inside `pre`/`code`. At the Track boundary, line endings in text nodes below `pre` are normalized and represented as `<br />` elements so Track's HTML normalization preserves the visual code-block lines; authored attributes and nested elements remain intact. Markdown syntax is not interpreted.
 
+Text-only `pre`/`code` blocks are pre-highlighted at this Track boundary with the exact `highlight.js` 10.7.3 runtime used by Track, then their source line breaks are serialized as `<br />` elements. Code blocks containing authored nested elements are treated as rich code: their structure and attributes are preserved and syntax highlighting is skipped.
+
 ## Requirements
 
 - Node.js 20+

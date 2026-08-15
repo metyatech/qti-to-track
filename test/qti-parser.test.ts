@@ -111,7 +111,7 @@ describe('qti-parser', () => {
       </qti-assessment-item>
     `);
 
-    expect(parsed.prompt).toBe('<p>Paragraph</p><pre><code>code</code></pre><img src="image.png" alt="Image" /><br /><hr />');
+    expect(parsed.prompt).toBe('<p>Paragraph</p><pre><code><span class="hljs-keyword">code</span></code></pre><img src="image.png" alt="Image" /><br /><hr />');
   });
 
   it('serializes ordered presentation HTML, attributes, headings, and links without Markdown conversion', () => {
@@ -159,7 +159,7 @@ describe('qti-parser', () => {
     const content = toTrackContent('ENTITY', `<qti-assessment-item identifier="ENTITY" title="Entities"><qti-item-body><pre><code>${encodedSource}</code></pre><qti-extended-text-interaction response-identifier="RESPONSE" /></qti-item-body></qti-assessment-item>`);
     const expectedSource = '<html>\n<body>\nfoo & bar\n</body>\n</html>';
 
-    expect(content).toContain('<pre><code>&lt;html&gt;<br />&lt;body&gt;<br />foo &amp; bar<br />&lt;/body&gt;<br />&lt;/html&gt;</code></pre>');
+    expect(content).toContain('<pre><code><span class="hljs-section">&lt;html&gt;</span><br /><span class="hljs-section">&lt;body&gt;</span><br /><span class="hljs-attribute">foo</span> &amp; bar<br /><span class="hljs-section">&lt;/body&gt;</span><br /><span class="hljs-section">&lt;/html&gt;</span></code></pre>');
     expect(content).not.toContain('&amp;#x3C;');
     expect(content).not.toContain('&amp;#60;');
     expect(content).not.toContain('&amp;lt;');
@@ -180,6 +180,7 @@ describe('qti-parser', () => {
     expect(span?.getAttribute('data-label')).toBe('日本語');
     expect(span?.textContent).toBe('A');
     expect(renderPreformattedText(code)).toBe('<div id="content">\n    document.getElementById("content"). A = "2em";\n</div>');
+    expect(content).not.toContain('hljs-');
     expect(content).not.toContain('&#x3C;');
     expect(content).not.toContain('&#60;');
     expect(content).not.toContain('&amp;lt;');
@@ -207,6 +208,72 @@ describe('qti-parser', () => {
     expect(document.getElementsByTagName('pre').item(0)?.getAttribute('class')).toBe('example');
     expect(document.getElementsByTagName('code').item(0)?.getAttribute('data-language')).toBe('js');
     expect(document.getElementsByTagName('span').item(0)?.getAttribute('style')).toBe('color:red');
+  });
+
+  it('pre-highlights text-only JavaScript once before converting source line breaks', () => {
+    const source = 'var array = ["a","b","c"];\nconsole.log(array[1]);';
+    const content = toTrackContent(
+      'TEXT-ONLY-JS',
+      `<qti-assessment-item identifier="TEXT-ONLY-JS" title="Text-only JavaScript"><qti-item-body><pre><code class="language-js" data-language="js">${source}</code></pre><qti-extended-text-interaction responseIdentifier="RESPONSE" /></qti-item-body></qti-assessment-item>`,
+    );
+    const document = parseTrackHtml(content);
+    const code = document.getElementsByTagName('code').item(0);
+
+    expect(content).toContain('<span class="hljs-keyword">var</span>');
+    expect(content).toContain('<span class="hljs-string">"a"</span>');
+    expect(content).toContain('<span class="hljs-built_in">console</span>');
+    expect(content).toContain('<span class="hljs-number">1</span>');
+    expect(content).toContain('<br />');
+    expect(code?.getAttribute('class')).toBe('language-js');
+    expect(code?.getAttribute('data-language')).toBe('js');
+    expect(renderPreformattedText(code)).toBe(source);
+  });
+
+  it('pre-highlights text-only HTML with Track-compatible token markup', () => {
+    const source = '<html lang="ja">\n  <body>Hi</body>\n</html>';
+    const encodedSource = source.replace(/</gu, '&lt;').replace(/>/gu, '&gt;');
+    const content = toTrackContent(
+      'TEXT-ONLY-HTML',
+      `<qti-assessment-item identifier="TEXT-ONLY-HTML" title="Text-only HTML"><qti-item-body><pre><code class="language-html">${encodedSource}</code></pre><qti-extended-text-interaction responseIdentifier="RESPONSE" /></qti-item-body></qti-assessment-item>`,
+    );
+    const document = parseTrackHtml(content);
+    const code = document.getElementsByTagName('code').item(0);
+
+    expect(content).toContain('<span class="hljs-tag">&lt;<span class="hljs-name">html</span>');
+    expect(content).toContain('<span class="hljs-attr">lang</span>');
+    expect(content).toContain('<span class="hljs-string">"ja"</span>');
+    expect(renderPreformattedText(code)).toBe(source);
+  });
+
+  it('keeps language=plain unhighlighted while normalizing CRLF and CR', () => {
+    const source = 'line1\r\n    indented\rline3';
+    const content = toTrackContent(
+      'PLAIN-CODE',
+      `<qti-assessment-item identifier="PLAIN-CODE" title="Plain code"><qti-item-body><pre><code class="language-plain">${source}</code></pre><qti-extended-text-interaction responseIdentifier="RESPONSE" /></qti-item-body></qti-assessment-item>`,
+    );
+    const document = parseTrackHtml(content);
+    const code = document.getElementsByTagName('code').item(0);
+
+    expect(content).not.toContain('hljs-');
+    expect(content).toContain('line1<br />    indented<br />line3');
+    expect(renderPreformattedText(code)).toBe('line1\n    indented\nline3');
+  });
+
+  it('uses highlightAuto for unknown and missing languages', () => {
+    const source = 'var value = "text";\nconsole.log(value);';
+    const unknownContent = toTrackContent(
+      'UNKNOWN-CODE',
+      `<qti-assessment-item identifier="UNKNOWN-CODE" title="Unknown code"><qti-item-body><pre><code class="language-not-a-real-language">${source}</code></pre><qti-extended-text-interaction responseIdentifier="RESPONSE" /></qti-item-body></qti-assessment-item>`,
+    );
+    const missingContent = toTrackContent(
+      'MISSING-CODE',
+      `<qti-assessment-item identifier="MISSING-CODE" title="Missing language"><qti-item-body><pre><code>${source}</code></pre><qti-extended-text-interaction responseIdentifier="RESPONSE" /></qti-item-body></qti-assessment-item>`,
+    );
+
+    expect(unknownContent).toContain('<span class="hljs-string">"text"</span>');
+    expect(missingContent).toContain('<span class="hljs-string">"text"</span>');
+    expect(renderPreformattedText(parseTrackHtml(unknownContent).getElementsByTagName('code').item(0))).toBe(source);
+    expect(renderPreformattedText(parseTrackHtml(missingContent).getElementsByTagName('code').item(0))).toBe(source);
   });
 
   it('keeps rich HTML in choices and feedback', () => {
