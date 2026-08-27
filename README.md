@@ -121,12 +121,15 @@ qti-to-track publish --qti-dir ./my-qti-package --yes --track-map ./track-map.ya
 | `--check-existing` | no | For track-map-unmapped items only: check exact-title duplicates and fail closed if any are found; also runs during dry-run and requires Track credentials |
 | `--recreate-missing` | no | Recreate a Track question/material whose mapped track-map ID no longer exists on Track, instead of failing. Off by default |
 | `--upload-images` | no | Upload local images to Track API and replace paths |
+| `--image-upload-cache <path>` | no | Atomically persist and reuse uploaded image URLs for a retry |
 | `--base-url <url>` | no | Track base URL (default: https://tracks.dev) |
 | `--json` | no | Print result as JSON |
 
 Dry-run behavior: without `--yes`, QTI parsing and payload generation run without Track credentials. A plain dry-run reports, per question, whether it would update a track-map-mapped record by ID or create a new one. Credentials are required in dry-run only when an option needs the Track API, such as `--upload-images`, `--adopt-existing-by-title`, or `--check-existing`. `--check-existing` performs Track API title-duplicate lookups (for unmapped items) even in dry-run and fails closed on exact-title question or material duplicates. `--adopt-existing-by-title` instead treats a matching title as an update target for an unmapped item, and real publish updates that existing Track record. A plain real publish (no title flags) updates mapped items by ID and creates unmapped items; it performs no title lookup and never overwrites by title.
 
 When `--upload-images` is used, qti-to-track walks canonical HTML `<img src="...">` elements, reads each local image's original dimensions, and sends them to the Track upload-signature API. Remote, protocol-relative, and data URLs remain unchanged. If a local image's dimensions cannot be determined, publish fails instead of leaving a local path in Track content.
+
+For a real publish that may be retried after Track authentication expires, pass `--image-upload-cache <path>`. The cache stores versioned entries keyed by the local image content's SHA-256 hash and is atomically replaced after each successful upload. A later invocation with the same cache path reuses matching remote URLs without uploading those images again. If image progress cannot be persisted, qti-to-track returns an ordinary failure instead of the authentication-retry exit code.
 
 ## Track-map compatibility
 

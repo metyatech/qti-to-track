@@ -1,6 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { Buffer } from 'node:buffer';
+import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +15,11 @@ const fixtureDir = resolve(repoRoot, 'test/fixtures/canonical-qti');
 const cliPath = resolve(repoRoot, 'dist/cli/index.js');
 
 async function runPublish(args: string[]) {
-  return await execFileAsync(process.execPath, [cliPath, 'publish', '--qti-dir', fixtureDir, '--json', ...args], {
+  return await runPublishFromDir(fixtureDir, args);
+}
+
+async function runPublishFromDir(qtiDir: string, args: string[]) {
+  return await execFileAsync(process.execPath, [cliPath, 'publish', '--qti-dir', qtiDir, '--json', ...args], {
     cwd: repoRoot,
     env: {
       PATH: process.env.PATH,
@@ -139,6 +144,172 @@ describe('publish CLI', () => {
         'qti/cloze-item': { track_question_id: 102 },
       });
       expect(trackMap.questions?.['qti/descriptive-item']).toBeUndefined();
+    } finally {
+      await closeMockTrackServer(server);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reuses successful image uploads from the cache after one auth retry', async () => {
+    const dir = join(tmpdir(), `qti-to-track-image-auth-retry-${process.pid}-${Date.now()}`);
+    const qtiDir = await writeTwoImageQtiFixture(dir);
+    const cachePath = join(dir, 'image-upload-cache.json');
+
+    let port = 0;
+    let signatureRequests = 0;
+    let cloudinaryUploads = 0;
+    let questionRequests = 0;
+    const server = createMockTrackServer((request, response) => {
+      if (request.method === 'POST' && request.url === '/api/images/upload-signature') {
+        signatureRequests += 1;
+        if (signatureRequests === 2) {
+          response.statusCode = 401;
+          response.statusMessage = 'Unauthorized';
+          response.end('Unauthorized');
+          return;
+        }
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({
+          result: {
+            timestamp: '1',
+            api_key: 'test-key',
+            signature: 'test-signature',
+            tags: '',
+            url: `http://127.0.0.1:${port}/cloudinary`,
+          },
+        }));
+        return;
+      }
+      if (request.method === 'POST' && request.url === '/cloudinary') {
+        cloudinaryUploads += 1;
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ secure_url: `https://cdn.example/image-${cloudinaryUploads}.png` }));
+        return;
+      }
+      if (request.method === 'POST' && request.url === '/api/questions') {
+        questionRequests += 1;
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ result: { id: 100 + questionRequests, title: `Question ${questionRequests}` } }));
+        return;
+      }
+      response.statusCode = 404;
+      response.end('Not Found');
+    });
+    port = await listenMockTrackServer(server);
+
+    try {
+      const publishArgs = [
+        '--base-url',
+        `http://127.0.0.1:${port}`,
+        '--appspace',
+        'test-appspace',
+        '--cookie',
+        'sid=test',
+        '--no-track-map',
+        '--no-material',
+        '--upload-images',
+        '--image-upload-cache',
+        cachePath,
+        '--yes',
+      ];
+      const firstError = await runPublishFromDir(qtiDir, publishArgs).then(
+        () => undefined,
+        (publishError: { code?: number; stderr?: string }) => publishError,
+      );
+
+      expect(firstError).toBeDefined();
+      expect(firstError?.code).toBe(3);
+      expect(firstError?.code).not.toBe(3221226505);
+      expect(firstError?.stderr).toContain('401');
+      const cache = JSON.parse(await readFile(cachePath, 'utf8')) as {
+        version: number;
+        images: Record<string, { url: string; relativePath?: string }>;
+      };
+      expect(cache.version).toBe(1);
+      expect(Object.values(cache.images)).toContainEqual(expect.objectContaining({
+        url: 'https://cdn.example/image-1.png',
+        relativePath: 'assets/one.png',
+      }));
+
+      const secondResult = await runPublishFromDir(qtiDir, publishArgs);
+      expect(secondResult.stdout).toContain('"dryRun": false');
+      expect(signatureRequests).toBe(3);
+      expect(cloudinaryUploads).toBe(2);
+      expect(questionRequests).toBe(3);
+    } finally {
+      await closeMockTrackServer(server);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns ordinary failure when image progress has no retry cache', async () => {
+    const dir = join(tmpdir(), `qti-to-track-image-unsafe-${process.pid}-${Date.now()}`);
+    const qtiDir = await writeTwoImageQtiFixture(dir);
+    let port = 0;
+    let signatureRequests = 0;
+    let cloudinaryUploads = 0;
+    const server = createMockTrackServer((request, response) => {
+      if (request.method === 'POST' && request.url === '/api/images/upload-signature') {
+        signatureRequests += 1;
+        if (signatureRequests === 2) {
+          response.statusCode = 401;
+          response.statusMessage = 'Unauthorized';
+          response.end('Unauthorized');
+          return;
+        }
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({
+          result: {
+            timestamp: '1',
+            api_key: 'test-key',
+            signature: 'test-signature',
+            tags: '',
+            url: `http://127.0.0.1:${port}/cloudinary`,
+          },
+        }));
+        return;
+      }
+      if (request.method === 'POST' && request.url === '/cloudinary') {
+        cloudinaryUploads += 1;
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ secure_url: `https://cdn.example/image-${cloudinaryUploads}.png` }));
+        return;
+      }
+      response.statusCode = 404;
+      response.end('Not Found');
+    });
+    port = await listenMockTrackServer(server);
+
+    try {
+      const error = await runPublishFromDir(qtiDir, [
+        '--base-url',
+        `http://127.0.0.1:${port}`,
+        '--appspace',
+        'test-appspace',
+        '--cookie',
+        'sid=test',
+        '--no-track-map',
+        '--no-material',
+        '--upload-images',
+        '--yes',
+      ]).then(
+        () => undefined,
+        (publishError: { code?: number; stderr?: string }) => publishError,
+      );
+
+      expect(error).toBeDefined();
+      expect(error?.code).toBe(1);
+      expect(error?.code).not.toBe(3);
+      expect(error?.code).not.toBe(3221226505);
+      expect(error?.stderr).toContain('401');
+      expect(error?.stderr).toContain('Automatic authentication retry is unsafe because image upload progress could not be persisted.');
+      expect(signatureRequests).toBe(2);
+      expect(cloudinaryUploads).toBe(1);
     } finally {
       await closeMockTrackServer(server);
       await rm(dir, { recursive: true, force: true });
@@ -377,4 +548,33 @@ async function writeTrackMapTarget(target: {
     'utf8',
   );
   return trackMapPath;
+}
+
+async function writeTwoImageQtiFixture(dir: string): Promise<string> {
+  const qtiDir = join(dir, 'qti');
+  await cp(fixtureDir, qtiDir, { recursive: true });
+  await mkdir(join(qtiDir, 'assets'), { recursive: true });
+  await writeFile(join(qtiDir, 'assets', 'one.png'), pngHeader(2, 3));
+  await writeFile(join(qtiDir, 'assets', 'two.png'), pngHeader(4, 5));
+  const descriptiveItemPath = join(qtiDir, 'items', 'descriptive-item.qti.xml');
+  const descriptiveItem = await readFile(descriptiveItemPath, 'utf8');
+  await writeFile(
+    descriptiveItemPath,
+    descriptiveItem.replace(
+      '<img src="assets/diagram.png" alt="Cell diagram" />',
+      '<img src="assets/one.png" alt="First image" /><img src="assets/two.png" alt="Second image" />',
+    ),
+    'utf8',
+  );
+  return qtiDir;
+}
+
+function pngHeader(width: number, height: number): Buffer {
+  const buffer = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buffer, 0);
+  buffer.writeUInt32BE(13, 8);
+  buffer.write('IHDR', 12, 'ascii');
+  buffer.writeUInt32BE(width, 16);
+  buffer.writeUInt32BE(height, 20);
+  return buffer;
 }

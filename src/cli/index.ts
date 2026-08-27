@@ -4,6 +4,12 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { Command } from 'commander';
 import { loadQtiPackage } from '../fs/qti-loader.js';
+import {
+  ImageUploadError,
+  loadImageUploadCache,
+  saveImageUploadCache,
+  uploadImagesAndReplaceUrls,
+} from '../generator/image-uploader.js';
 import { toTrackPayloads } from '../generator/track-generator.js';
 import {
   loadTrackMap,
@@ -106,6 +112,7 @@ program
   .option('--check-existing', 'perform duplicate checks during dry-run; requires Track credentials', false)
   .option('--recreate-missing', 'recreate Track questions/materials whose mapped track-map ID no longer exists on Track', false)
   .option('--upload-images', 'upload local images to Track API and replace paths with remote URLs', false)
+  .option('--image-upload-cache <path>', 'path to the per-publish image upload cache')
   .action(async (options) => {
     let persistTrackMap: (result: PublishResult) => Promise<void> = async () => {};
     let trackMapPersistenceEnabled = false;
@@ -179,8 +186,24 @@ program
       // 3. Upload images if requested
       if (options.uploadImages) {
         if (!options.json) console.log(`Uploading images...`);
-        const { uploadImagesAndReplaceUrls } = await import('../generator/image-uploader.js');
-        payload.questions = await uploadImagesAndReplaceUrls(payload.questions, options.qtiDir, apiClient!);
+        const imageUploadCachePath =
+          typeof options.imageUploadCache === 'string' ? options.imageUploadCache : undefined;
+        const initialImageUploadCache =
+          imageUploadCachePath === undefined
+            ? undefined
+            : await loadImageUploadCache(imageUploadCachePath);
+        payload.questions = await uploadImagesAndReplaceUrls(
+          payload.questions,
+          options.qtiDir,
+          apiClient!,
+          {
+            initialCache: initialImageUploadCache,
+            onCacheUpdate:
+              imageUploadCachePath === undefined
+                ? undefined
+                : async (cache) => await saveImageUploadCache(imageUploadCachePath, cache),
+          },
+        );
       }
 
       // Resolve identity-based update targets from the track-map. Questions are
@@ -255,6 +278,19 @@ program
         }
       }
     } catch (e: unknown) {
+      if (e instanceof ImageUploadError) {
+        const authFailure = isTrackAuthenticationError(e);
+        if (e.hasRemoteProgress && !e.retryStatePersisted) {
+          console.error(
+            'Automatic authentication retry is unsafe because image upload progress could not be persisted.',
+          );
+        }
+        console.error(`\nError during publish: ${e.message}`);
+        const safeToRetryAuthentication =
+          authFailure && (!e.hasRemoteProgress || e.retryStatePersisted);
+        process.exitCode = safeToRetryAuthentication ? TRACK_AUTH_EXIT_CODE : 1;
+        return;
+      }
       if (e instanceof PartialPublishError) {
         const authFailure = isTrackAuthenticationError(e);
         const hasPartialProgress = hasPartialPublishProgress(e.partialResult);

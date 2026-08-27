@@ -2,6 +2,21 @@ export { loadQtiPackage } from './fs/qti-loader.js';
 export { toTrackPayloads } from './generator/track-generator.js';
 
 export {
+  hashImageContent,
+  ImageUploadError,
+  loadImageUploadCache,
+  saveImageUploadCache,
+  uploadImagesAndReplaceUrls,
+  IMAGE_UPLOAD_CACHE_VERSION,
+} from './generator/image-uploader.js';
+
+export type {
+  ImageUploadCache,
+  ImageUploadCacheEntry,
+  ImageUploadOptions,
+} from './generator/image-uploader.js';
+
+export {
   getPublishFailureExitCode,
   hasPartialPublishProgress,
   isTrackAuthenticationError,

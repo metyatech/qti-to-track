@@ -29,11 +29,26 @@ export class PartialPublishError extends Error {
  * those errors before inspecting the underlying TrackApiError status.
  */
 export function isTrackAuthenticationError(error: unknown): boolean {
-  let current = error;
-  while (current instanceof PartialPublishError) {
-    current = current.originalError;
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  while (current !== undefined && current !== null && !seen.has(current)) {
+    seen.add(current);
+    if (current instanceof TrackApiError && (current.status === 401 || current.status === 403)) {
+      return true;
+    }
+    if (current instanceof PartialPublishError) {
+      current = current.originalError;
+      continue;
+    }
+    if (current instanceof Error && 'cause' in current) {
+      current = (current as Error & { cause?: unknown }).cause;
+      continue;
+    }
+    break;
   }
-  return current instanceof TrackApiError && (current.status === 401 || current.status === 403);
+
+  return false;
 }
 
 export function getPublishFailureExitCode(error: unknown): 1 | 3 {

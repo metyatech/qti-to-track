@@ -95,6 +95,17 @@ describe('publishToTrack', () => {
     }))).toBe(1);
   });
 
+  it('walks contextual Error.cause chains without looping', () => {
+    const trackError = trackApiError(401, 'Unauthorized');
+    const contextualError = new Error('image upload failed');
+    (contextualError as Error & { cause?: unknown }).cause = trackError;
+    expect(isTrackAuthenticationError(contextualError)).toBe(true);
+
+    const cyclicError = new Error('cyclic wrapper');
+    (cyclicError as Error & { cause?: unknown }).cause = cyclicError;
+    expect(isTrackAuthenticationError(cyclicError)).toBe(false);
+  });
+
   it.each([
     [{ trackQuestionIds: [101], materialAction: 'skipped' }, true],
     [{ trackQuestionIds: [], trackMaterialId: 201, materialAction: 'created' }, true],
