@@ -21,7 +21,6 @@ import {
   updateTrackMapForPublish,
 } from '../publish/track-map.js';
 import {
-  getPublishFailureExitCode,
   hasPartialPublishProgress,
   isTrackAuthenticationError,
   publishToTrack,
@@ -337,10 +336,11 @@ program
           'Automatic authentication retry is unsafe because image upload progress could not be persisted.',
         );
       }
-      process.exitCode =
-        authFailure && imageProgressRetrySafe
-          ? TRACK_AUTH_EXIT_CODE
-          : getPublishFailureExitCode(e);
+      // Exit code 3 is reserved for authentication failures whose complete
+      // remote progress is safe to reuse or resume on one retry. In particular,
+      // an unsafe image state must never fall back to the generic auth code.
+      const safeToRetryAuthentication = authFailure && imageProgressRetrySafe;
+      process.exitCode = safeToRetryAuthentication ? TRACK_AUTH_EXIT_CODE : 1;
       return;
     }
   });
