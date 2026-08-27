@@ -30,9 +30,28 @@ export interface ImageUploadCache {
   images: Record<string, ImageUploadCacheEntry>;
 }
 
+/**
+ * Describes whether image side effects created by this invocation are safe to
+ * reuse during one authentication retry.
+ */
+export interface ImageUploadRetryState {
+  uploadedImageCount: number;
+  hasRemoteProgress: boolean;
+  retryStatePersisted: boolean;
+}
+
+export function createImageUploadRetryState(): ImageUploadRetryState {
+  return {
+    uploadedImageCount: 0,
+    hasRemoteProgress: false,
+    retryStatePersisted: true,
+  };
+}
+
 export interface ImageUploadOptions {
   initialCache?: ImageUploadCache;
   onCacheUpdate?: (cache: ImageUploadCache) => void | Promise<void>;
+  progress?: ImageUploadRetryState;
 }
 
 /**
@@ -162,11 +181,11 @@ async function replaceImagesInText(
 
       progress.uploadedImageCount += 1;
       progress.resolvedImageCount += 1;
+      progress.retryStatePersisted = false;
+      syncImageUploadRetryState(options.progress, progress);
       uploadCache.set(sourceHash, remoteUrl);
 
-      if (options.onCacheUpdate === undefined) {
-        progress.retryStatePersisted = false;
-      } else {
+      if (options.onCacheUpdate !== undefined) {
         const nextCache: ImageUploadCache = {
           version: IMAGE_UPLOAD_CACHE_VERSION,
           images: {
@@ -181,6 +200,8 @@ async function replaceImagesInText(
         try {
           await options.onCacheUpdate(nextCache);
         } catch (error) {
+          progress.retryStatePersisted = false;
+          syncImageUploadRetryState(options.progress, progress);
           throw createImageUploadError(
             `Failed to save image upload cache after uploading ${localPath}: ${formatError(error)}`,
             error,
@@ -189,6 +210,7 @@ async function replaceImagesInText(
         }
         imageUploadCache.images = nextCache.images;
         progress.retryStatePersisted = true;
+        syncImageUploadRetryState(options.progress, progress);
       }
     } else {
       progress.resolvedImageCount += 1;
@@ -204,6 +226,16 @@ interface ImageUploadProgress {
   uploadedImageCount: number;
   resolvedImageCount: number;
   retryStatePersisted: boolean;
+}
+
+function syncImageUploadRetryState(
+  target: ImageUploadRetryState | undefined,
+  progress: ImageUploadProgress,
+): void {
+  if (target === undefined) return;
+  target.uploadedImageCount = progress.uploadedImageCount;
+  target.hasRemoteProgress = progress.uploadedImageCount > 0;
+  target.retryStatePersisted = progress.retryStatePersisted;
 }
 
 function createImageUploadError(
@@ -473,8 +505,11 @@ export async function uploadImagesAndReplaceUrls(
   const progress: ImageUploadProgress = {
     uploadedImageCount: 0,
     resolvedImageCount: 0,
-    retryStatePersisted: options.initialCache !== undefined,
+    // No new upload is safe even without a cache. A cache is only required
+    // once this invocation creates a remote image side effect.
+    retryStatePersisted: true,
   };
+  syncImageUploadRetryState(options.progress, progress);
   const newQuestions: TrackQuestionPayload[] = [];
 
   for (const q of questions) {
@@ -519,5 +554,6 @@ export async function uploadImagesAndReplaceUrls(
     newQuestions.push(newQ);
   }
 
+  syncImageUploadRetryState(options.progress, progress);
   return newQuestions;
 }

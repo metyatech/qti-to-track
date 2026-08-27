@@ -245,6 +245,402 @@ describe('publish CLI', () => {
     }
   });
 
+  it('downgrades a later auth failure when completed image uploads have no retry cache', async () => {
+    const dir = join(tmpdir(), `qti-to-track-image-later-auth-unsafe-${process.pid}-${Date.now()}`);
+    const qtiDir = await writeTwoImageQtiFixture(dir);
+    let port = 0;
+    let signatureRequests = 0;
+    let cloudinaryUploads = 0;
+    let questionRequests = 0;
+    const server = createMockTrackServer((request, response) => {
+      if (request.method === 'POST' && request.url === '/api/images/upload-signature') {
+        signatureRequests += 1;
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({
+          result: {
+            timestamp: '1',
+            api_key: 'test-key',
+            signature: 'test-signature',
+            tags: '',
+            url: `http://127.0.0.1:${port}/cloudinary`,
+          },
+        }));
+        return;
+      }
+      if (request.method === 'POST' && request.url === '/cloudinary') {
+        cloudinaryUploads += 1;
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ secure_url: `https://cdn.example/image-${cloudinaryUploads}.png` }));
+        return;
+      }
+      if (request.method === 'POST' && request.url === '/api/questions') {
+        questionRequests += 1;
+        response.statusCode = 401;
+        response.statusMessage = 'Unauthorized';
+        response.end('Unauthorized');
+        return;
+      }
+      response.statusCode = 404;
+      response.end('Not Found');
+    });
+    port = await listenMockTrackServer(server);
+
+    try {
+      const error = await runPublishFromDir(qtiDir, [
+        '--base-url',
+        `http://127.0.0.1:${port}`,
+        '--appspace',
+        'test-appspace',
+        '--cookie',
+        'sid=test',
+        '--no-track-map',
+        '--no-material',
+        '--upload-images',
+        '--yes',
+      ]).then(
+        () => undefined,
+        (publishError: { code?: number; stderr?: string }) => publishError,
+      );
+
+      expect(error).toBeDefined();
+      expect(error?.code).toBe(1);
+      expect(error?.code).not.toBe(3);
+      expect(error?.code).not.toBe(3221226505);
+      expect(error?.stderr).toContain('401');
+      expect(error?.stderr).toContain('Automatic authentication retry is unsafe because image upload progress could not be persisted.');
+      expect(signatureRequests).toBe(2);
+      expect(cloudinaryUploads).toBe(2);
+      expect(questionRequests).toBe(1);
+    } finally {
+      await closeMockTrackServer(server);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a later auth failure retryable when completed image uploads are cached', async () => {
+    const dir = join(tmpdir(), `qti-to-track-image-later-auth-safe-${process.pid}-${Date.now()}`);
+    const qtiDir = await writeTwoImageQtiFixture(dir);
+    const cachePath = join(dir, 'image-upload-cache.json');
+    let port = 0;
+    let signatureRequests = 0;
+    let cloudinaryUploads = 0;
+    const server = createMockTrackServer((request, response) => {
+      if (request.method === 'POST' && request.url === '/api/images/upload-signature') {
+        signatureRequests += 1;
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({
+          result: {
+            timestamp: '1',
+            api_key: 'test-key',
+            signature: 'test-signature',
+            tags: '',
+            url: `http://127.0.0.1:${port}/cloudinary`,
+          },
+        }));
+        return;
+      }
+      if (request.method === 'POST' && request.url === '/cloudinary') {
+        cloudinaryUploads += 1;
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ secure_url: `https://cdn.example/image-${cloudinaryUploads}.png` }));
+        return;
+      }
+      if (request.method === 'POST' && request.url === '/api/questions') {
+        response.statusCode = 401;
+        response.statusMessage = 'Unauthorized';
+        response.end('Unauthorized');
+        return;
+      }
+      response.statusCode = 404;
+      response.end('Not Found');
+    });
+    port = await listenMockTrackServer(server);
+
+    try {
+      const error = await runPublishFromDir(qtiDir, [
+        '--base-url',
+        `http://127.0.0.1:${port}`,
+        '--appspace',
+        'test-appspace',
+        '--cookie',
+        'sid=test',
+        '--no-track-map',
+        '--no-material',
+        '--upload-images',
+        '--image-upload-cache',
+        cachePath,
+        '--yes',
+      ]).then(
+        () => undefined,
+        (publishError: { code?: number; stderr?: string }) => publishError,
+      );
+
+      expect(error).toBeDefined();
+      expect(error?.code).toBe(3);
+      expect(error?.code).not.toBe(3221226505);
+      expect(error?.stderr).toContain('401');
+      expect(error?.stderr).not.toContain('Automatic authentication retry is unsafe because image upload progress could not be persisted.');
+      const cache = JSON.parse(await readFile(cachePath, 'utf8')) as {
+        version: number;
+        images: Record<string, unknown>;
+      };
+      expect(cache.version).toBe(1);
+      expect(Object.keys(cache.images)).toHaveLength(2);
+      expect(signatureRequests).toBe(2);
+      expect(cloudinaryUploads).toBe(2);
+    } finally {
+      await closeMockTrackServer(server);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('combines safe image progress with safe partial question progress', async () => {
+    const dir = join(tmpdir(), `qti-to-track-image-partial-safe-${process.pid}-${Date.now()}`);
+    const qtiDir = await writeTwoImageQtiFixture(dir);
+    const cachePath = join(dir, 'image-upload-cache.json');
+    const trackMapPath = join(dir, 'track-map.yaml');
+    let port = 0;
+    let createCount = 0;
+    const server = createMockTrackServer((request, response) => {
+      if (request.method === 'POST' && request.url === '/api/images/upload-signature') {
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({
+          result: {
+            timestamp: '1',
+            api_key: 'test-key',
+            signature: 'test-signature',
+            tags: '',
+            url: `http://127.0.0.1:${port}/cloudinary`,
+          },
+        }));
+        return;
+      }
+      if (request.method === 'POST' && request.url === '/cloudinary') {
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ secure_url: 'https://cdn.example/image.png' }));
+        return;
+      }
+      if (request.method === 'POST' && request.url === '/api/questions') {
+        createCount += 1;
+        if (createCount === 2) {
+          response.statusCode = 401;
+          response.statusMessage = 'Unauthorized';
+          response.end('Unauthorized');
+          return;
+        }
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ result: { id: 200 + createCount, title: `Question ${createCount}` } }));
+        return;
+      }
+      response.statusCode = 404;
+      response.end('Not Found');
+    });
+    port = await listenMockTrackServer(server);
+
+    try {
+      const error = await runPublishFromDir(qtiDir, [
+        '--base-url',
+        `http://127.0.0.1:${port}`,
+        '--appspace',
+        'test-appspace',
+        '--cookie',
+        'sid=test',
+        '--track-map',
+        trackMapPath,
+        '--no-material',
+        '--upload-images',
+        '--image-upload-cache',
+        cachePath,
+        '--yes',
+      ]).then(
+        () => undefined,
+        (publishError: { code?: number; stderr?: string }) => publishError,
+      );
+
+      expect(error).toBeDefined();
+      expect(error?.code).toBe(3);
+      expect(error?.stderr).toContain('401');
+      expect(error?.stderr).not.toContain('Automatic authentication retry is unsafe because image upload progress could not be persisted.');
+      const trackMap = await loadTrackMap(trackMapPath);
+      expect(trackMap.questions?.['qti/choice-item']).toMatchObject({ track_question_id: 201 });
+    } finally {
+      await closeMockTrackServer(server);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not retry when partial question progress is unsafe even if images are cached', async () => {
+    const dir = join(tmpdir(), `qti-to-track-image-partial-map-unsafe-${process.pid}-${Date.now()}`);
+    const qtiDir = await writeTwoImageQtiFixture(dir);
+    const cachePath = join(dir, 'image-upload-cache.json');
+    const trackMapPath = join(dir, 'missing-parent', 'track-map.yaml');
+    let port = 0;
+    let createCount = 0;
+    const server = createMockTrackServer((request, response) => {
+      if (request.method === 'POST' && request.url === '/api/images/upload-signature') {
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({
+          result: {
+            timestamp: '1',
+            api_key: 'test-key',
+            signature: 'test-signature',
+            tags: '',
+            url: `http://127.0.0.1:${port}/cloudinary`,
+          },
+        }));
+        return;
+      }
+      if (request.method === 'POST' && request.url === '/cloudinary') {
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ secure_url: 'https://cdn.example/image.png' }));
+        return;
+      }
+      if (request.method === 'POST' && request.url === '/api/questions') {
+        createCount += 1;
+        if (createCount === 2) {
+          response.statusCode = 401;
+          response.statusMessage = 'Unauthorized';
+          response.end('Unauthorized');
+          return;
+        }
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ result: { id: 300 + createCount, title: `Question ${createCount}` } }));
+        return;
+      }
+      response.statusCode = 404;
+      response.end('Not Found');
+    });
+    port = await listenMockTrackServer(server);
+
+    try {
+      const error = await runPublishFromDir(qtiDir, [
+        '--base-url',
+        `http://127.0.0.1:${port}`,
+        '--appspace',
+        'test-appspace',
+        '--cookie',
+        'sid=test',
+        '--track-map',
+        trackMapPath,
+        '--no-material',
+        '--upload-images',
+        '--image-upload-cache',
+        cachePath,
+        '--yes',
+      ]).then(
+        () => undefined,
+        (publishError: { code?: number; stderr?: string }) => publishError,
+      );
+
+      expect(error).toBeDefined();
+      expect(error?.code).toBe(1);
+      expect(error?.code).not.toBe(3);
+      expect(error?.stderr).toContain('401');
+      expect(error?.stderr).toContain('Failed to save partial track-map');
+      expect(error?.stderr).toContain('Automatic authentication retry is unsafe because partial publish progress could not be persisted.');
+      expect(error?.stderr).not.toContain('Automatic authentication retry is unsafe because image upload progress could not be persisted.');
+    } finally {
+      await closeMockTrackServer(server);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('treats image cache hits as safe for a later auth failure', async () => {
+    const dir = join(tmpdir(), `qti-to-track-image-cache-hit-auth-${process.pid}-${Date.now()}`);
+    const qtiDir = await writeTwoImageQtiFixture(dir);
+    const cachePath = join(dir, 'image-upload-cache.json');
+    let port = 0;
+    let failQuestions = false;
+    let signatureRequests = 0;
+    let cloudinaryUploads = 0;
+    let questionRequests = 0;
+    const server = createMockTrackServer((request, response) => {
+      if (request.method === 'POST' && request.url === '/api/images/upload-signature') {
+        signatureRequests += 1;
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({
+          result: {
+            timestamp: '1',
+            api_key: 'test-key',
+            signature: 'test-signature',
+            tags: '',
+            url: `http://127.0.0.1:${port}/cloudinary`,
+          },
+        }));
+        return;
+      }
+      if (request.method === 'POST' && request.url === '/cloudinary') {
+        cloudinaryUploads += 1;
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ secure_url: `https://cdn.example/image-${cloudinaryUploads}.png` }));
+        return;
+      }
+      if (request.method === 'POST' && request.url === '/api/questions') {
+        questionRequests += 1;
+        if (failQuestions) {
+          response.statusCode = 401;
+          response.statusMessage = 'Unauthorized';
+          response.end('Unauthorized');
+          return;
+        }
+        response.statusCode = 200;
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ result: { id: 400 + questionRequests, title: `Question ${questionRequests}` } }));
+        return;
+      }
+      response.statusCode = 404;
+      response.end('Not Found');
+    });
+    port = await listenMockTrackServer(server);
+
+    try {
+      const publishArgs = [
+        '--base-url',
+        `http://127.0.0.1:${port}`,
+        '--appspace',
+        'test-appspace',
+        '--cookie',
+        'sid=test',
+        '--no-track-map',
+        '--no-material',
+        '--upload-images',
+        '--image-upload-cache',
+        cachePath,
+        '--yes',
+      ];
+      await runPublishFromDir(qtiDir, publishArgs);
+      failQuestions = true;
+      const error = await runPublishFromDir(qtiDir, publishArgs).then(
+        () => undefined,
+        (publishError: { code?: number; stderr?: string }) => publishError,
+      );
+
+      expect(error).toBeDefined();
+      expect(error?.code).toBe(3);
+      expect(error?.code).not.toBe(3221226505);
+      expect(error?.stderr).toContain('401');
+      expect(error?.stderr).not.toContain('Automatic authentication retry is unsafe because image upload progress could not be persisted.');
+      expect(signatureRequests).toBe(2);
+      expect(cloudinaryUploads).toBe(2);
+      expect(questionRequests).toBe(4);
+    } finally {
+      await closeMockTrackServer(server);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('returns ordinary failure when image progress has no retry cache', async () => {
     const dir = join(tmpdir(), `qti-to-track-image-unsafe-${process.pid}-${Date.now()}`);
     const qtiDir = await writeTwoImageQtiFixture(dir);

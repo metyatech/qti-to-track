@@ -5,10 +5,12 @@ import { dirname } from 'node:path';
 import { Command } from 'commander';
 import { loadQtiPackage } from '../fs/qti-loader.js';
 import {
+  createImageUploadRetryState,
   ImageUploadError,
   loadImageUploadCache,
   saveImageUploadCache,
   uploadImagesAndReplaceUrls,
+  type ImageUploadRetryState,
 } from '../generator/image-uploader.js';
 import { toTrackPayloads } from '../generator/track-generator.js';
 import {
@@ -116,6 +118,7 @@ program
   .action(async (options) => {
     let persistTrackMap: (result: PublishResult) => Promise<void> = async () => {};
     let trackMapPersistenceEnabled = false;
+    const imageRetryState: ImageUploadRetryState = createImageUploadRetryState();
     try {
       const hasTrackMapArg = process.argv.some((arg) => arg === '--track-map' || arg.startsWith('--track-map='));
       if (hasTrackMapArg && process.argv.includes('--no-track-map')) {
@@ -202,6 +205,7 @@ program
               imageUploadCachePath === undefined
                 ? undefined
                 : async (cache) => await saveImageUploadCache(imageUploadCachePath, cache),
+            progress: imageRetryState,
           },
         );
       }
@@ -306,18 +310,37 @@ program
             console.error(`Failed to save partial track-map: ${saveError instanceof Error ? saveError.message : String(saveError)}`);
           }
         }
+        const imageProgressRetrySafe = isImageRetrySafe(imageRetryState);
+        if (authFailure && !imageProgressRetrySafe) {
+          console.error(
+            'Automatic authentication retry is unsafe because image upload progress could not be persisted.',
+          );
+        }
         if (hasPartialProgress && authFailure && !partialProgressPersisted) {
           console.error(
             'Automatic authentication retry is unsafe because partial publish progress could not be persisted.',
           );
         }
+        // Exit code 3 means authentication failed and every remote side effect
+        // from this invocation can be safely reused or resumed on one retry.
+        const publishProgressRetrySafe = !hasPartialProgress || partialProgressPersisted;
         const safeToRetryAuthentication =
-          authFailure && (!hasPartialProgress || partialProgressPersisted);
+          authFailure && publishProgressRetrySafe && imageProgressRetrySafe;
         process.exitCode = safeToRetryAuthentication ? TRACK_AUTH_EXIT_CODE : 1;
         return;
       }
       console.error(`Error during publish: ${e instanceof Error ? e.message : String(e)}`);
-      process.exitCode = getPublishFailureExitCode(e);
+      const authFailure = isTrackAuthenticationError(e);
+      const imageProgressRetrySafe = isImageRetrySafe(imageRetryState);
+      if (authFailure && !imageProgressRetrySafe) {
+        console.error(
+          'Automatic authentication retry is unsafe because image upload progress could not be persisted.',
+        );
+      }
+      process.exitCode =
+        authFailure && imageProgressRetrySafe
+          ? TRACK_AUTH_EXIT_CODE
+          : getPublishFailureExitCode(e);
       return;
     }
   });
@@ -401,4 +424,8 @@ function normalizeBaseUrl(value: string): string {
 
 function identity(value: string): string {
   return value;
+}
+
+function isImageRetrySafe(state: ImageUploadRetryState): boolean {
+  return !state.hasRemoteProgress || state.retryStatePersisted;
 }

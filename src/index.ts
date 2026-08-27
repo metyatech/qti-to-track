@@ -2,6 +2,7 @@ export { loadQtiPackage } from './fs/qti-loader.js';
 export { toTrackPayloads } from './generator/track-generator.js';
 
 export {
+  createImageUploadRetryState,
   hashImageContent,
   ImageUploadError,
   loadImageUploadCache,
@@ -14,6 +15,7 @@ export type {
   ImageUploadCache,
   ImageUploadCacheEntry,
   ImageUploadOptions,
+  ImageUploadRetryState,
 } from './generator/image-uploader.js';
 
 export {

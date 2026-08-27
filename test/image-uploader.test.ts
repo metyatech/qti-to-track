@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { TrackApiError, type TrackQuestionPayload } from '@metyatech/track-tcm-api-client';
 import {
+  createImageUploadRetryState,
   ImageUploadError,
   loadImageUploadCache,
   saveImageUploadCache,
@@ -188,6 +189,59 @@ describe('uploadImagesAndReplaceUrls', () => {
     expect(retryUploads).toEqual(['two.png']);
     expect(retryQuestion?.content).toContain('https://cdn.example/one.png');
     expect(retryQuestion?.content).toContain('https://cdn.example/two.png');
+  });
+
+  it('reports completed image retry safety to the caller', async () => {
+    const qtiDir = await mkdtemp(join(tmpdir(), 'qti-to-track-images-progress-'));
+    await mkdir(join(qtiDir, 'assets'));
+    await writeFile(join(qtiDir, 'assets', 'diagram.png'), pngHeader(2, 3));
+
+    const withoutCache = createImageUploadRetryState();
+    await uploadImagesAndReplaceUrls(
+      [imageQuestion('assets/diagram.png')],
+      qtiDir,
+      { async uploadImage() { return 'https://cdn.example/diagram.png'; } },
+      { progress: withoutCache },
+    );
+    expect(withoutCache).toEqual({
+      uploadedImageCount: 1,
+      hasRemoteProgress: true,
+      retryStatePersisted: false,
+    });
+
+    const cachePath = join(qtiDir, 'image-upload-cache.json');
+    const withCache = createImageUploadRetryState();
+    await uploadImagesAndReplaceUrls(
+      [imageQuestion('assets/diagram.png')],
+      qtiDir,
+      { async uploadImage() { return 'https://cdn.example/diagram.png'; } },
+      {
+        initialCache: await loadImageUploadCache(cachePath),
+        onCacheUpdate: (cache) => saveImageUploadCache(cachePath, cache),
+        progress: withCache,
+      },
+    );
+    expect(withCache).toEqual({
+      uploadedImageCount: 1,
+      hasRemoteProgress: true,
+      retryStatePersisted: true,
+    });
+
+    const cacheHit = createImageUploadRetryState();
+    await uploadImagesAndReplaceUrls(
+      [imageQuestion('assets/diagram.png')],
+      qtiDir,
+      { async uploadImage() { throw new Error('cache hit should not upload'); } },
+      {
+        initialCache: await loadImageUploadCache(cachePath),
+        progress: cacheHit,
+      },
+    );
+    expect(cacheHit).toEqual({
+      uploadedImageCount: 0,
+      hasRemoteProgress: false,
+      retryStatePersisted: true,
+    });
   });
 
   it('does not reuse a cache entry when the image content hash changes', async () => {

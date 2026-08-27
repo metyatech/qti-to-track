@@ -131,6 +131,8 @@ When `--upload-images` is used, qti-to-track walks canonical HTML `<img src="...
 
 For a real publish that may be retried after Track authentication expires, pass `--image-upload-cache <path>`. The cache stores versioned entries keyed by the local image content's SHA-256 hash and is atomically replaced after each successful upload. A later invocation with the same cache path reuses matching remote URLs without uploading those images again. If image progress cannot be persisted, qti-to-track returns an ordinary failure instead of the authentication-retry exit code.
 
+Exit code `3` means both that Track authentication failed and that every remote side effect from the invocation can be safely reused or resumed once. Therefore, if images were uploaded without a retry cache and a later question or material operation receives `401` or `403`, qti-to-track returns ordinary failure `1` and does not signal an automatic retry.
+
 ## Track-map compatibility
 
 When `--track-map` is used, the publish command creates or updates a `track-map.yaml` mapping file compatible with `@metyatech/weekly-quiz-workbench`. It stores Track IDs, updated timestamps, and stable hashes of API payload JSON so duplicate questions and materials can be tracked between executions by stable source identifiers instead of mutable display titles. Dry-runs do not write the track-map. `--no-track-map` disables all track-map reads and writes. When `--no-material` is used, no material entry is written.
