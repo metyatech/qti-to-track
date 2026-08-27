@@ -1,5 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
-import { publishToTrack, toTrackMaterialPayload, PartialPublishError } from '../../src/publish/publisher.js';
+import {
+  getPublishFailureExitCode,
+  isTrackAuthenticationError,
+  publishToTrack,
+  toTrackMaterialPayload,
+  PartialPublishError,
+  TRACK_AUTH_EXIT_CODE,
+} from '../../src/publish/publisher.js';
 import { TrackApiError, type TrackApiClient, type TrackMaterialPayload, type TrackQuestionPayload } from '@metyatech/track-tcm-api-client';
 import type { TrackMaterialDraft } from '../../src/types.js';
 
@@ -50,6 +57,42 @@ describe('publishToTrack', () => {
       apiMessage: 'Not Found',
     });
   }
+
+  function trackApiError(status: number, statusText = 'Request failed'): TrackApiError {
+    return new TrackApiError({
+      method: 'PUT',
+      url: 'https://tracks.dev/api/questions/101',
+      status,
+      statusText,
+      responseBody: statusText,
+      apiMessage: statusText,
+    });
+  }
+
+  it.each([
+    [401, 'Unauthorized'],
+    [403, 'Forbidden'],
+  ])('identifies Track %s as an authentication failure', (status, statusText) => {
+    const error = trackApiError(status, statusText);
+
+    expect(isTrackAuthenticationError(error)).toBe(true);
+    expect(getPublishFailureExitCode(error)).toBe(TRACK_AUTH_EXIT_CODE);
+    expect(getPublishFailureExitCode(new PartialPublishError(error, {
+      trackQuestionIds: [],
+      materialAction: 'skipped',
+    }))).toBe(TRACK_AUTH_EXIT_CODE);
+  });
+
+  it.each([404, 500])('does not identify Track %s as an authentication failure', (status) => {
+    const error = trackApiError(status);
+
+    expect(isTrackAuthenticationError(error)).toBe(false);
+    expect(getPublishFailureExitCode(error)).toBe(1);
+    expect(getPublishFailureExitCode(new PartialPublishError(error, {
+      trackQuestionIds: [],
+      materialAction: 'skipped',
+    }))).toBe(1);
+  });
 
   it('creates new items when not dry-run and no duplicates exist', async () => {
     const mockClient = {

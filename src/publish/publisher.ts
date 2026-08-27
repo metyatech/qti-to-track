@@ -10,6 +10,9 @@ import type { TrackMaterialDraft } from '../types.js';
 const INITIAL_RELEASE_NOTE = 'Initial assessment release';
 const UPDATED_RELEASE_NOTE = 'Updated assessment release';
 
+/** Exit code used when Track credentials need to be refreshed. */
+export const TRACK_AUTH_EXIT_CODE = 3;
+
 export class PartialPublishError extends Error {
   constructor(
     public readonly originalError: unknown,
@@ -18,6 +21,23 @@ export class PartialPublishError extends Error {
     super(originalError instanceof Error ? originalError.message : String(originalError));
     this.name = 'PartialPublishError';
   }
+}
+
+/**
+ * Return whether an error represents an expired or rejected Track session.
+ * Publish operations wrap API failures in PartialPublishError, so unwrap
+ * those errors before inspecting the underlying TrackApiError status.
+ */
+export function isTrackAuthenticationError(error: unknown): boolean {
+  let current = error;
+  while (current instanceof PartialPublishError) {
+    current = current.originalError;
+  }
+  return current instanceof TrackApiError && (current.status === 401 || current.status === 403);
+}
+
+export function getPublishFailureExitCode(error: unknown): 1 | 3 {
+  return isTrackAuthenticationError(error) ? TRACK_AUTH_EXIT_CODE : 1;
 }
 
 export interface PublishResult {

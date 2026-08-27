@@ -12,7 +12,13 @@ import {
   type TrackMapTarget,
   updateTrackMapForPublish,
 } from '../publish/track-map.js';
-import { publishToTrack, toTrackMaterialPayload, PartialPublishError, type PublishResult } from '../publish/publisher.js';
+import {
+  getPublishFailureExitCode,
+  publishToTrack,
+  toTrackMaterialPayload,
+  PartialPublishError,
+  type PublishResult,
+} from '../publish/publisher.js';
 import { loadSession } from './session.js';
 
 const program = new Command();
@@ -56,7 +62,8 @@ program
     if (options.uploadImages) {
       if (!options.appspace || (!options.authorization && !options.cookie)) {
         console.error('Error: --appspace and either --authorization or --cookie are required when using --upload-images');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       
       const { createTrackApiClient } = await import('@metyatech/track-tcm-api-client');
@@ -97,7 +104,7 @@ program
   .option('--recreate-missing', 'recreate Track questions/materials whose mapped track-map ID no longer exists on Track', false)
   .option('--upload-images', 'upload local images to Track API and replace paths with remote URLs', false)
   .action(async (options) => {
-    let persistTrackMap: ((result: PublishResult) => Promise<void>) | undefined;
+    let persistTrackMap: (result: PublishResult) => Promise<void> = async () => {};
     try {
       const hasTrackMapArg = process.argv.some((arg) => arg === '--track-map' || arg.startsWith('--track-map='));
       if (hasTrackMapArg && process.argv.includes('--no-track-map')) {
@@ -184,22 +191,9 @@ program
           trackMap.materials?.[`qti/${legacyMaterialKey}`]?.track_material_id
         : undefined;
 
-      // 5. Publish
-      const publishResult = await publishToTrack(
-        apiClient,
-        payload.materialDraft,
-        payload.questions,
-        {
-          dryRun: isDryRun,
-          adoptExistingByTitle: options.adoptExistingByTitle,
-          checkExisting: options.checkExisting,
-          skipMaterial: options.material === false,
-          recreateMissing: options.recreateMissing,
-          mappedQuestionIds,
-          mappedMaterialId,
-        },
-      );
-
+      // Build the persistence closure before publishing. A publish can fail
+      // after creating a prefix of the questions, and that partial result must
+      // be persisted before the command exits so a retry updates those IDs.
       persistTrackMap = async (publishResult: PublishResult) => {
         if (!isDryRun && useTrackMap) {
           const materialPayload =
@@ -226,6 +220,22 @@ program
         }
       };
 
+      // 5. Publish
+      const publishResult = await publishToTrack(
+        apiClient,
+        payload.materialDraft,
+        payload.questions,
+        {
+          dryRun: isDryRun,
+          adoptExistingByTitle: options.adoptExistingByTitle,
+          checkExisting: options.checkExisting,
+          skipMaterial: options.material === false,
+          recreateMissing: options.recreateMissing,
+          mappedQuestionIds,
+          mappedMaterialId,
+        },
+      );
+
       // 6. Update track-map
       await persistTrackMap(publishResult);
 
@@ -239,22 +249,22 @@ program
           console.log(`Release ID: ${publishResult.trackReleaseId}`);
         }
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (e instanceof PartialPublishError) {
         console.error(`\nError during publish: ${e.originalError instanceof Error ? e.originalError.message : String(e.originalError)}`);
         console.error(`Attempting to save partial publish progress to track-map...`);
         try {
           // This ensures whatever was successfully published isn't orphaned
-          if (persistTrackMap) {
-            await persistTrackMap(e.partialResult);
-          }
-        } catch (saveError: any) {
-          console.error(`Failed to save partial track-map: ${saveError.message}`);
+          await persistTrackMap(e.partialResult);
+        } catch (saveError: unknown) {
+          console.error(`Failed to save partial track-map: ${saveError instanceof Error ? saveError.message : String(saveError)}`);
         }
-        process.exit(1);
+        process.exitCode = getPublishFailureExitCode(e);
+        return;
       }
-      console.error(`Error during publish: ${e.message}`);
-      process.exit(1);
+      console.error(`Error during publish: ${e instanceof Error ? e.message : String(e)}`);
+      process.exitCode = getPublishFailureExitCode(e);
+      return;
     }
   });
 

@@ -2,6 +2,12 @@ export { loadQtiPackage } from './fs/qti-loader.js';
 export { toTrackPayloads } from './generator/track-generator.js';
 
 export {
+  getPublishFailureExitCode,
+  isTrackAuthenticationError,
+  TRACK_AUTH_EXIT_CODE,
+} from './publish/publisher.js';
+
+export {
   parseAssessmentItemXml,
   parseAssessmentXml,
   parseQtiPackageFromXml,

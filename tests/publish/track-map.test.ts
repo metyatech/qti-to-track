@@ -347,6 +347,67 @@ describe('track-map', () => {
     expect(updated.materials).toBeUndefined();
   });
 
+  it('persists only the successfully published question prefix from a partial result', () => {
+    const updated = updateTrackMapForPublish({
+      trackMap: { version: 1 },
+      target: { base_url: 'https://tracks.dev', appspace: 'app' },
+      baseKey: 'qti',
+      questionKeys: ['q1', 'q2', 'q3'],
+      materialKey: 'assessment-id',
+      questionPayloads: [
+        {
+          title: 'Q1',
+          questionKind: 1,
+          status: 2,
+          content: 'One',
+          howToSolve: '',
+          quizCategories: [99],
+          availableApps: ['training'],
+        },
+        {
+          title: 'Q2',
+          questionKind: 1,
+          status: 2,
+          content: 'Two',
+          howToSolve: '',
+          quizCategories: [99],
+          availableApps: ['training'],
+        },
+        {
+          title: 'Q3',
+          questionKind: 1,
+          status: 2,
+          content: 'Three',
+          howToSolve: '',
+          quizCategories: [99],
+          availableApps: ['training'],
+        },
+      ],
+      materialDraft: {
+        title: 'Material',
+        style: 1,
+        status: 2,
+        language: 'ja',
+        basicTimeMinutes: 1,
+        difficulty: 1,
+        questionKeys: ['q1', 'q2', 'q3'],
+        materialTypes: ['others'],
+        availableApps: ['training'],
+      },
+      result: {
+        trackQuestionIds: [101, 102],
+        materialAction: 'skipped',
+      },
+      updatedAt: '2026-05-30T00:00:00.000Z',
+    });
+
+    expect(updated.questions).toMatchObject({
+      'qti/q1': { track_question_id: 101 },
+      'qti/q2': { track_question_id: 102 },
+    });
+    expect(updated.questions?.['qti/q3']).toBeUndefined();
+  });
+
   it('can leave track-map completely untouched when disabled by caller', async () => {
     const content = 'version: 1\n';
     await writeFile(TEST_FILE, content, 'utf8');
