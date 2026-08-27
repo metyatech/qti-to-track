@@ -47,6 +47,15 @@ export interface PublishResult {
   materialAction: 'created' | 'updated' | 'skipped' | 'dry-run';
 }
 
+/** Return whether a publish result proves that Track may already have side effects. */
+export function hasPartialPublishProgress(result: PublishResult): boolean {
+  return (
+    result.trackQuestionIds.length > 0 ||
+    result.trackMaterialId !== undefined ||
+    result.trackReleaseId !== undefined
+  );
+}
+
 export interface PublishOptions {
   dryRun: boolean;
   adoptExistingByTitle: boolean;

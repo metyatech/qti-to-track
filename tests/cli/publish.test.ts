@@ -223,10 +223,100 @@ describe('publish CLI', () => {
       );
 
       expect(error).toBeDefined();
-      expect(error?.code).toBe(3);
+      expect(error?.code).toBe(1);
+      expect(error?.code).not.toBe(3);
       expect(error?.stderr).toContain('401');
       expect(error?.stderr).toContain('Failed to save partial track-map');
+      expect(error?.stderr).toContain('Automatic authentication retry is unsafe because partial publish progress could not be persisted.');
       expect(createCount).toBe(2);
+    } finally {
+      await closeMockTrackServer(server);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([401, 403])('returns an ordinary failure when partial progress has no track-map: %s', async (status) => {
+    const dir = join(tmpdir(), `qti-to-track-no-map-partial-${process.pid}-${Date.now()}-${status}`);
+    await mkdir(dir, { recursive: true });
+    let requestCount = 0;
+    const server = createMockTrackServer((_request, response) => {
+      requestCount += 1;
+      if (requestCount === 2) {
+        response.statusCode = status;
+        response.statusMessage = status === 401 ? 'Unauthorized' : 'Forbidden';
+        response.end(response.statusMessage);
+        return;
+      }
+
+      response.statusCode = 200;
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ result: { id: 100 + requestCount, title: `Question ${requestCount}` } }));
+    });
+    const port = await listenMockTrackServer(server);
+
+    try {
+      const error = await runPublish([
+        '--base-url',
+        `http://127.0.0.1:${port}`,
+        '--appspace',
+        'test-appspace',
+        '--cookie',
+        'sid=test',
+        '--no-track-map',
+        '--no-material',
+        '--yes',
+      ]).then(
+        () => undefined,
+        (publishError: { code?: number; stderr?: string }) => publishError,
+      );
+
+      expect(error).toBeDefined();
+      expect(error?.code).toBe(1);
+      expect(error?.code).not.toBe(3);
+      expect(error?.code).not.toBe(3221226505);
+      expect(error?.stderr).toContain(String(status));
+      expect(error?.stderr).toContain('Automatic authentication retry is unsafe because partial publish progress could not be persisted.');
+      expect(requestCount).toBe(2);
+    } finally {
+      await closeMockTrackServer(server);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([401, 403])('returns the auth exit code when 401/403 occurs before any side effect: %s', async (status) => {
+    const dir = join(tmpdir(), `qti-to-track-no-partial-auth-${process.pid}-${Date.now()}-${status}`);
+    await mkdir(dir, { recursive: true });
+    let requestCount = 0;
+    const server = createMockTrackServer((_request, response) => {
+      requestCount += 1;
+      response.statusCode = status;
+      response.statusMessage = status === 401 ? 'Unauthorized' : 'Forbidden';
+      response.end(response.statusMessage);
+    });
+    const port = await listenMockTrackServer(server);
+
+    try {
+      const error = await runPublish([
+        '--base-url',
+        `http://127.0.0.1:${port}`,
+        '--appspace',
+        'test-appspace',
+        '--cookie',
+        'sid=test',
+        '--no-track-map',
+        '--no-material',
+        '--yes',
+      ]).then(
+        () => undefined,
+        (publishError: { code?: number; stderr?: string }) => publishError,
+      );
+
+      expect(error).toBeDefined();
+      expect(error?.code).toBe(3);
+      expect(error?.code).not.toBe(3221226505);
+      expect(error?.stderr).toContain(String(status));
+      expect(error?.stderr).not.toContain('Automatic authentication retry is unsafe');
+      expect(requestCount).toBe(1);
     } finally {
       await closeMockTrackServer(server);
       await rm(dir, { recursive: true, force: true });

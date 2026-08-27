@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   getPublishFailureExitCode,
+  hasPartialPublishProgress,
   isTrackAuthenticationError,
   publishToTrack,
   toTrackMaterialPayload,
@@ -92,6 +93,15 @@ describe('publishToTrack', () => {
       trackQuestionIds: [],
       materialAction: 'skipped',
     }))).toBe(1);
+  });
+
+  it.each([
+    [{ trackQuestionIds: [101], materialAction: 'skipped' }, true],
+    [{ trackQuestionIds: [], trackMaterialId: 201, materialAction: 'created' }, true],
+    [{ trackQuestionIds: [], trackReleaseId: 'rel-1', materialAction: 'updated' }, true],
+    [{ trackQuestionIds: [], materialAction: 'skipped' }, false],
+  ])('detects partial publish progress: %o', (result, expected) => {
+    expect(hasPartialPublishProgress(result as any)).toBe(expected);
   });
 
   it('creates new items when not dry-run and no duplicates exist', async () => {

@@ -3,6 +3,7 @@ export { toTrackPayloads } from './generator/track-generator.js';
 
 export {
   getPublishFailureExitCode,
+  hasPartialPublishProgress,
   isTrackAuthenticationError,
   TRACK_AUTH_EXIT_CODE,
 } from './publish/publisher.js';

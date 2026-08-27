@@ -14,9 +14,12 @@ import {
 } from '../publish/track-map.js';
 import {
   getPublishFailureExitCode,
+  hasPartialPublishProgress,
+  isTrackAuthenticationError,
   publishToTrack,
   toTrackMaterialPayload,
   PartialPublishError,
+  TRACK_AUTH_EXIT_CODE,
   type PublishResult,
 } from '../publish/publisher.js';
 import { loadSession } from './session.js';
@@ -105,6 +108,7 @@ program
   .option('--upload-images', 'upload local images to Track API and replace paths with remote URLs', false)
   .action(async (options) => {
     let persistTrackMap: (result: PublishResult) => Promise<void> = async () => {};
+    let trackMapPersistenceEnabled = false;
     try {
       const hasTrackMapArg = process.argv.some((arg) => arg === '--track-map' || arg.startsWith('--track-map='));
       if (hasTrackMapArg && process.argv.includes('--no-track-map')) {
@@ -120,6 +124,7 @@ program
       validateTrackMapTargetConflicts(options, trackMap.target);
 
       const isDryRun = !options.yes;
+      trackMapPersistenceEnabled = !isDryRun && useTrackMap;
       if (isDryRun && !options.json) {
         console.log('[DRY-RUN] Executing publish in dry-run mode. No changes will be made.');
       }
@@ -251,15 +256,28 @@ program
       }
     } catch (e: unknown) {
       if (e instanceof PartialPublishError) {
+        const authFailure = isTrackAuthenticationError(e);
+        const hasPartialProgress = hasPartialPublishProgress(e.partialResult);
+        let partialProgressPersisted = false;
         console.error(`\nError during publish: ${e.originalError instanceof Error ? e.originalError.message : String(e.originalError)}`);
-        console.error(`Attempting to save partial publish progress to track-map...`);
-        try {
-          // This ensures whatever was successfully published isn't orphaned
-          await persistTrackMap(e.partialResult);
-        } catch (saveError: unknown) {
-          console.error(`Failed to save partial track-map: ${saveError instanceof Error ? saveError.message : String(saveError)}`);
+        if (hasPartialProgress && trackMapPersistenceEnabled) {
+          console.error(`Attempting to save partial publish progress to track-map...`);
+          try {
+            // This ensures whatever was successfully published isn't orphaned
+            await persistTrackMap(e.partialResult);
+            partialProgressPersisted = true;
+          } catch (saveError: unknown) {
+            console.error(`Failed to save partial track-map: ${saveError instanceof Error ? saveError.message : String(saveError)}`);
+          }
         }
-        process.exitCode = getPublishFailureExitCode(e);
+        if (hasPartialProgress && authFailure && !partialProgressPersisted) {
+          console.error(
+            'Automatic authentication retry is unsafe because partial publish progress could not be persisted.',
+          );
+        }
+        const safeToRetryAuthentication =
+          authFailure && (!hasPartialProgress || partialProgressPersisted);
+        process.exitCode = safeToRetryAuthentication ? TRACK_AUTH_EXIT_CODE : 1;
         return;
       }
       console.error(`Error during publish: ${e instanceof Error ? e.message : String(e)}`);
