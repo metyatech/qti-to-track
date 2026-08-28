@@ -127,10 +127,66 @@ describe('qti-parser', () => {
     `);
 
     expect(parsed.prompt).toBe(
-      '<h3 id="heading" class="section" data-kind="prompt">Heading</h3>\n          <p id="prompt" class="lead" data-kind="question">Hello <span style="color: red;" class="accent" title="label">world</span> <a href="https://example.com" aria-label="example">link</a>.</p>\n          <p>![diagram](assets/diagram.png)</p>',
+      '<h3 id="heading" class="section" data-kind="prompt">Heading</h3>\n          <p id="prompt" class="lead" data-kind="question">Hello <span style="color: red;" class="accent" title="label">world</span> <a href="https://example.com" aria-label="example" target="_blank" rel="noopener noreferrer">link</a>.</p>\n          <p>![diagram](assets/diagram.png)</p>',
     );
     expect(parsed.prompt).not.toContain('### Heading');
     expect(parsed.prompt).not.toContain('<img');
+  });
+
+  it('normalizes external web links for Track while preserving authored attributes', () => {
+    const parsed = parseAssessmentItemXml(`
+      <qti-assessment-item identifier="ITEM-LINKS" title="Links">
+        <qti-response-declaration identifier="RESPONSE" cardinality="single" base-type="identifier">
+          <qti-correct-response><qti-value>CHOICE_A</qti-value></qti-correct-response>
+        </qti-response-declaration>
+        <qti-item-body>
+          <p>
+            <a href="https://example.com/a">https</a>
+            <a href="HTTP://example.com/b">http</a>
+            <a href="//cdn.example.com/c">protocol-relative</a>
+            <a href="/relative">relative-root</a>
+            <a href="relative/page">relative-path</a>
+            <a href="#section">fragment</a>
+            <a href="mailto:test@example.com">mail</a>
+            <a href="tel:+81000000000">phone</a>
+            <a href="https://example.com/starter" target="_self" rel="nofollow NOOPENER" data-kind="starter">starter</a>
+          </p>
+          <qti-choice-interaction response-identifier="RESPONSE">
+            <qti-simple-choice identifier="CHOICE_A"><a href="https://choice.example">choice</a></qti-simple-choice>
+          </qti-choice-interaction>
+        </qti-item-body>
+      </qti-assessment-item>
+    `);
+
+    const promptDocument = parseTrackHtml(parsed.prompt);
+    const promptLinks = Array.from(promptDocument.getElementsByTagName('a'));
+    expect(promptLinks).toHaveLength(9);
+
+    for (const index of [0, 1, 2, 8]) {
+      expect(promptLinks[index]?.getAttribute('target')).toBe('_blank');
+      expect(promptLinks[index]?.getAttribute('rel')?.toLowerCase().split(/\s+/u)).toEqual(
+        expect.arrayContaining(['noopener', 'noreferrer']),
+      );
+    }
+
+    for (const index of [3, 4, 5, 6, 7]) {
+      expect(promptLinks[index]?.hasAttribute('target')).toBe(false);
+      expect(promptLinks[index]?.hasAttribute('rel')).toBe(false);
+    }
+
+    expect(promptLinks[8]?.getAttribute('rel')?.split(/\s+/u).map((token) => token.toLowerCase())).toEqual([
+      'nofollow',
+      'noopener',
+      'noreferrer',
+    ]);
+    expect(promptLinks[8]?.getAttribute('data-kind')).toBe('starter');
+
+    const choiceDocument = parseTrackHtml(parsed.choices[0]?.text ?? '');
+    const choiceLink = choiceDocument.getElementsByTagName('a').item(0);
+    expect(choiceLink?.getAttribute('target')).toBe('_blank');
+    expect(choiceLink?.getAttribute('rel')?.toLowerCase().split(/\s+/u)).toEqual(
+      expect.arrayContaining(['noopener', 'noreferrer']),
+    );
   });
 
   it('preserves pre/code whitespace and nested markup while placing text-entry placeholders structurally', () => {

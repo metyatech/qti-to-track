@@ -328,6 +328,39 @@ function serializeAttributes(attrs: XmlRecord): string {
     .join('');
 }
 
+function appendMissingRelTokens(rel: string, requiredTokens: readonly string[]): string {
+  const existingTokens = new Set(
+    rel
+      .split(/\s+/u)
+      .filter((token) => token.length > 0)
+      .map((token) => token.toLowerCase()),
+  );
+  const missingTokens = requiredTokens.filter((token) => !existingTokens.has(token));
+
+  return missingTokens.length === 0
+    ? rel
+    : `${rel}${rel.length > 0 ? ' ' : ''}${missingTokens.join(' ')}`;
+}
+
+function serializeTrackElementAttributes(element: OrderedElement): string {
+  if (element.name !== 'a') {
+    return serializeAttributes(element.attrs);
+  }
+
+  const href = readStringAttribute(element.attrs, '@_href');
+  if (href === undefined || !/^(?:https?:\/\/|\/\/)/iu.test(href.trim())) {
+    return serializeAttributes(element.attrs);
+  }
+
+  const attrs = { ...element.attrs };
+  attrs['@_target'] = '_blank';
+  attrs['@_rel'] = appendMissingRelTokens(
+    readStringAttribute(attrs, '@_rel') ?? '',
+    ['noopener', 'noreferrer'],
+  );
+  return serializeAttributes(attrs);
+}
+
 function createHtmlRenderContext(
   responsesByDeclaration: Record<string, ParsedResponseDeclaration>,
 ): HtmlRenderContext {
@@ -484,7 +517,7 @@ function serializeOrderedHtmlNode(
     case 'textEntryInteraction':
       return renderTextEntryPlaceholder(element, context);
     default: {
-      const attributes = serializeAttributes(element.attrs);
+      const attributes = serializeTrackElementAttributes(element);
       const openingTag = `<${element.name}${attributes}`;
       if (VOID_HTML_ELEMENTS.has(element.name)) {
         return `${openingTag} />`;

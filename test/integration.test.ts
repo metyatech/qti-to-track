@@ -159,8 +159,9 @@ describe('integration: canonical QTI fixtures', () => {
     });
     const payload = toTrackPayloads(parsed);
 
-    expect(parsed.items[0]?.prompt).toBe(`<p><a href="${demoUrl}">完成見本を開く</a></p>`);
-    expect(payload.questions[0]?.content).toBe(`<p><a href="${demoUrl}">完成見本を開く</a></p>`);
+    const expectedDemoLink = `<a href="${demoUrl}" target="_blank" rel="noopener noreferrer">完成見本を開く</a>`;
+    expect(parsed.items[0]?.prompt).toBe(`<p>${expectedDemoLink}</p>`);
+    expect(payload.questions[0]?.content).toBe(`<p>${expectedDemoLink}</p>`);
   });
 
   it('keeps movie ticket prompt structure as canonical HTML', async () => {
