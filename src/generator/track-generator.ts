@@ -28,6 +28,16 @@ function toQuestionKind(item: ParsedQtiItem): 1 | 2 | 3 {
   return 3;
 }
 
+function assertTrackSafeClozeBlanks(item: ParsedQtiItem): void {
+  const unsafeIndex = item.blanks.findIndex((blank) => blank.answer.includes(';'));
+  if (unsafeIndex < 0) return;
+
+  throw new Error(
+    `QTI item ${item.identifier} cloze blank ${unsafeIndex + 1} contains ';'. ` +
+      `Track result CSV uses semicolons as blank separators, so keep semicolons outside text-entry interactions.`,
+  );
+}
+
 function toTrackBlankPayload(blank: ParsedQtiItem['blanks'][number]): TrackBlankPayload {
   return {
     answer: blank.answer,
@@ -132,6 +142,10 @@ function estimateMaterialTimeLimitSeconds(parsed: ParsedQtiPackage): number {
 }
 
 function toQuestionPayload(item: ParsedQtiItem): TrackQuestionPayload {
+  if (item.interactionType === 'text-entry') {
+    assertTrackSafeClozeBlanks(item);
+  }
+
   const content = appendScoringFooter(
     item.interactionType === 'text-entry'
       ? ensureClozePlaceholders(item.prompt, item.blanks)

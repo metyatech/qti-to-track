@@ -76,6 +76,13 @@ describe('integration: canonical QTI fixtures', () => {
     expect(descriptiveQuestion?.howToSolve).toBe('<p class="explanation">It is a <em>plant</em> cell.</p>');
   });
 
+  it('rejects cloze blanks containing Track CSV separator semicolons', () => {
+    const assessmentXml = `<qti-assessment-test identifier="semicolon-assessment"><qti-test-part><qti-assessment-section><qti-assessment-item-ref identifier="semicolon-cloze" href="semicolon-cloze.qti.xml" /></qti-assessment-section></qti-test-part></qti-assessment-test>`;
+    const itemXml = `<qti-assessment-item identifier="semicolon-cloze" title="Semicolon Cloze"><qti-response-declaration identifier="RESPONSE_1" cardinality="single" base-type="string" interpretation="regex"><qti-correct-response><qti-value>goodMorning\\s*\\(\\s*\\)\\s*;?\\s*</qti-value></qti-correct-response></qti-response-declaration><qti-item-body><qti-text-entry-interaction response-identifier="RESPONSE_1" /></qti-item-body></qti-assessment-item>`;
+    const parsed = parseQtiPackageFromXml({ assessmentXml, itemXmlByIdentifier: { 'semicolon-cloze': itemXml } });
+    expect(() => toTrackPayloads(parsed)).toThrow('Track result CSV uses semicolons as blank separators');
+  });
+
   it('escapes scorer rubric text inside the HTML scoring footer', () => {
     const parsed = parseQtiPackageFromXml({
       assessmentXml: '<assessmentTest identifier="footer-assessment"><testPart><assessmentSection><assessmentItemRef identifier="footer-question" href="footer-question.xml" /></assessmentSection></testPart></assessmentTest>',
