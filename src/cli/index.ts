@@ -101,7 +101,7 @@ program
   .option('--base-url <url>', 'Track base URL')
   .option('--authorization <token>', 'Track authorization header')
   .option('--cookie <cookie>', 'Track cookie header')
-  .option('--session <path>', 'weekly-quiz-workbench saved Track session file')
+  .option('--session <path>', 'Saved Track session file (JSON or YAML)')
   .option('--track-map <path>', 'path to track-map.yaml file')
   .option('--no-track-map', 'disable all track-map read/write')
   .option('--material-title <title>', 'override QTI assessment title for Track material')

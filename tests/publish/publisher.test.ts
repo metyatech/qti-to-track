@@ -106,6 +106,18 @@ describe('publishToTrack', () => {
     expect(isTrackAuthenticationError(cyclicError)).toBe(false);
   });
 
+  it('unwraps mixed publish and cause wrappers while retaining SDK error identity', () => {
+    const partial = new PartialPublishError(new Error('context', { cause: trackApiError(403) }), {
+      trackQuestionIds: [101], materialAction: 'skipped',
+    });
+    expect(isTrackAuthenticationError(new Error('outer', { cause: partial }))).toBe(true);
+    expect(isTrackAuthenticationError({ status: 401 })).toBe(false);
+    expect(isTrackAuthenticationError(new Error('HTTP 403'))).toBe(false);
+    const cyclic = new PartialPublishError(undefined, { trackQuestionIds: [], materialAction: 'skipped' });
+    Object.defineProperty(cyclic, 'originalError', { value: cyclic });
+    expect(isTrackAuthenticationError(cyclic)).toBe(false);
+  });
+
   it.each([
     [{ trackQuestionIds: [101], materialAction: 'skipped' }, true],
     [{ trackQuestionIds: [], trackMaterialId: 201, materialAction: 'created' }, true],

@@ -1,5 +1,6 @@
 import {
   TrackApiError,
+  isTrackApiAuthenticationError,
   type TrackApiClient,
   type TrackQuestionPayload,
   type TrackMaterialPayload,
@@ -34,7 +35,7 @@ export function isTrackAuthenticationError(error: unknown): boolean {
 
   while (current !== undefined && current !== null && !seen.has(current)) {
     seen.add(current);
-    if (current instanceof TrackApiError && (current.status === 401 || current.status === 403)) {
+    if (isTrackApiAuthenticationError(current)) {
       return true;
     }
     if (current instanceof PartialPublishError) {
