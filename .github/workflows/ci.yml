@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Configure private SDK read access
+        shell: bash
+        env:
+          PRIVATE_REPO_READ_TOKEN: ${{ secrets.PRIVATE_REPO_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PRIVATE_REPO_READ_TOKEN:-}" ]; then
+            echo "::error title=Missing private dependency access::Add the PRIVATE_REPO_READ_TOKEN Actions secret with read-only contents access to metyatech/track-tcm-api-client. Fork pull requests cannot receive this secret and must be verified from a trusted branch."
+            exit 1
+          fi
+
+          git_config="${RUNNER_TEMP}/qti-to-track-private-gitconfig"
+          rm -f "$git_config"
+          credential="$(
+            printf 'x-access-token:%s' "$PRIVATE_REPO_READ_TOKEN" |
+            base64 --wrap=0
+          )"
+
+          git config --file "$git_config" \
+            http.https://github.com/.extraheader \
+            "AUTHORIZATION: Basic ${credential}"
+          git config --file "$git_config" --add \
+            url."https://github.com/".insteadOf \
+            "ssh://git@github.com/"
+          git config --file "$git_config" --add \
+            url."https://github.com/".insteadOf \
+            "git@github.com:"
+          git config --file "$git_config" --add \
+            url."https://github.com/".insteadOf \
+            "git+ssh://git@github.com/"
+
+          {
+            echo "GIT_CONFIG_GLOBAL=${git_config}"
+            echo "GIT_CONFIG_NOSYSTEM=1"
+          } >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify
+        run: npm run verify
+
+      - name: Remove private Git configuration
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [ -n "${GIT_CONFIG_GLOBAL:-}" ]; then
+            rm -f "$GIT_CONFIG_GLOBAL"
+          fi

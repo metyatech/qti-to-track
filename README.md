@@ -212,3 +212,10 @@ npm run build    # compile TypeScript
 npm run test     # run tests with Vitest
 npm run verify   # test + build
 ```
+
+GitHub Actions runs `npm ci` and `npm run verify` for pushes to `main` and pull
+requests targeting `main`. Repository Actions must define a
+`PRIVATE_REPO_READ_TOKEN` secret with read-only contents access to the private
+`track-tcm-api-client` repository. Fork pull requests cannot receive this
+secret; their verification fails at the dependency-access step and must be run
+from a trusted branch.

@@ -1,6 +1,7 @@
 import {
   TrackApiError,
   isTrackApiAuthenticationError,
+  TRACK_API_SEARCH_LIMIT,
   type TrackApiClient,
   type TrackQuestionPayload,
   type TrackMaterialPayload,
@@ -118,6 +119,7 @@ async function findExactQuestionByTitle(
   title: string,
 ): Promise<{ id: number; title: string } | undefined> {
   const existingQuestions = await client.findQuestionsByTitle(title);
+  assertTitleSearchComplete(existingQuestions.length, 'question');
   return existingQuestions.find((question) => question.title === title);
 }
 
@@ -126,7 +128,18 @@ async function findExactMaterialByTitle(
   title: string,
 ): Promise<{ id: number; title: string } | undefined> {
   const existingMaterials = await client.findMaterialsByTitle(title);
+  assertTitleSearchComplete(existingMaterials.length, 'material');
   return existingMaterials.find((material) => material.title === title);
+}
+
+function assertTitleSearchComplete(
+  resultCount: number,
+  contentType: 'question' | 'material',
+): void {
+  if (resultCount < TRACK_API_SEARCH_LIMIT) return;
+  throw new Error(
+    `Track ${contentType} title search reached the ${String(TRACK_API_SEARCH_LIMIT)}-result API limit; refusing to publish with an incomplete match set. Refine the title and retry.`,
+  );
 }
 
 export async function publishToTrack(

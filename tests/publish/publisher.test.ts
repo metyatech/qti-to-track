@@ -8,7 +8,7 @@ import {
   PartialPublishError,
   TRACK_AUTH_EXIT_CODE,
 } from '../../src/publish/publisher.js';
-import { TrackApiError, type TrackApiClient, type TrackMaterialPayload, type TrackQuestionPayload } from '@metyatech/track-tcm-api-client';
+import { TRACK_API_SEARCH_LIMIT, TrackApiError, type TrackApiClient, type TrackMaterialPayload, type TrackQuestionPayload } from '@metyatech/track-tcm-api-client';
 import type { TrackMaterialDraft } from '../../src/types.js';
 
 describe('publishToTrack', () => {
@@ -336,6 +336,77 @@ describe('publishToTrack', () => {
       skipReview: true,
     });
   });
+
+  it.each([
+    ['question', false],
+    ['question', true],
+    ['material', false],
+    ['material', true],
+  ] as const)(
+    'refuses an incomplete %s title search (adopt=%s)',
+    async (contentType, adoptExistingByTitle) => {
+      const fullSearch = Array.from({ length: TRACK_API_SEARCH_LIMIT }, (_, index) => ({
+        id: index + 1,
+        title:
+          index === 0
+            ? contentType === 'question'
+              ? 'Q1'
+              : 'Test Material'
+            : `Unrelated ${String(index + 1)}`,
+        ...(contentType === 'material' ? { style: 1 } : {}),
+      }));
+      const mockClient = {
+        findQuestionsByTitle: vi.fn().mockResolvedValue(
+          contentType === 'question' ? fullSearch : [],
+        ),
+        findMaterialsByTitle: vi.fn().mockResolvedValue(
+          contentType === 'material' ? fullSearch : [],
+        ),
+        createQuestion: vi.fn().mockResolvedValue({ id: 501, title: 'Q1' }),
+        updateQuestion: vi.fn(),
+        createMaterial: vi.fn(),
+        updateMaterial: vi.fn(),
+        createRelease: vi.fn(),
+      } as unknown as TrackApiClient;
+
+      try {
+        await publishToTrack(
+          mockClient,
+          mockMaterialDraft,
+          mockQuestionPayloads,
+          {
+            dryRun: false,
+            adoptExistingByTitle,
+            checkExisting: !adoptExistingByTitle,
+          },
+        );
+        expect.fail('Expected a capped title search to be rejected');
+      } catch (error) {
+        expect(error).toBeInstanceOf(PartialPublishError);
+        expect((error as PartialPublishError).originalError).toBeInstanceOf(Error);
+        expect(
+          ((error as PartialPublishError).originalError as Error).message,
+        ).toContain(`${String(TRACK_API_SEARCH_LIMIT)}-result API limit`);
+        expect(mockClient.createMaterial).not.toHaveBeenCalled();
+        expect(mockClient.updateMaterial).not.toHaveBeenCalled();
+        expect(mockClient.createRelease).not.toHaveBeenCalled();
+        if (contentType === 'question') {
+          expect(mockClient.createQuestion).not.toHaveBeenCalled();
+          expect(mockClient.updateQuestion).not.toHaveBeenCalled();
+          expect(mockClient.findQuestionsByTitle).toHaveBeenCalledTimes(1);
+          expect(mockClient.findMaterialsByTitle).not.toHaveBeenCalled();
+          expect((error as PartialPublishError).partialResult.trackQuestionIds).toEqual([]);
+        } else {
+          expect(mockClient.createQuestion).toHaveBeenCalledTimes(1);
+          expect(mockClient.updateQuestion).not.toHaveBeenCalled();
+          expect(mockClient.findMaterialsByTitle).toHaveBeenCalledTimes(1);
+          expect((error as PartialPublishError).partialResult.trackQuestionIds).toEqual(
+            [501],
+          );
+        }
+      }
+    },
+  );
 
   it('returns dummy IDs in dry run without touching Track when no lookup option is enabled', async () => {
     const result = await publishToTrack(undefined, mockMaterialDraft, mockQuestionPayloads, {
