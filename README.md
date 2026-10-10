@@ -88,6 +88,8 @@ Publishes the parsed QTI package directly to Track LMS. Creates questions, bundl
 
 When `--track-map` is used, re-publishing updates the **same Track records by ID**. Each question is keyed by its stable QTI item identifier (`qti/<identifier>`), and the material is keyed by the stable QTI assessment identifier (`qti/<assessment-identifier>`), so previously published questions and materials are updated through their stored Track IDs regardless of their display titles. A question or material that is not yet in the track-map is **created** as a new Track record; a plain publish never searches by title and never overwrites an unrelated Track record that happens to share a title.
 
+An existing track-map must be valid YAML with a supported version and valid stored IDs. If it is empty, malformed, or has an invalid schema, publish stops before making Track API requests so it cannot mistake stored records for new ones. Only a missing track-map file starts with an empty map.
+
 If a mapped `track_question_id` (or `track_material_id`) no longer exists on Track (for example it was deleted in the Track UI), publish fails with an explicit error so a stale mapping cannot silently create or clobber the wrong record. Re-run with `--recreate-missing` to recreate those records and refresh the track-map.
 
 Title-based matching is opt-in and only applies to questions/materials that are **not** in the track-map: `--adopt-existing-by-title` adopts and updates an existing same-title Track record (use it to bootstrap a track-map from records published before track-map support), and `--check-existing` fails closed when a same-title record already exists.

@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import { execFile } from 'node:child_process';
 import { Buffer } from 'node:buffer';
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +28,38 @@ async function runPublishFromDir(qtiDir: string, args: string[]) {
 }
 
 describe('publish CLI', () => {
+  it('fails closed on an invalid existing track-map before making Track API requests', async () => {
+    const dir = await mkdtemp(join(tmpdir(), `qti-to-track-invalid-map-${process.pid}-`));
+    const trackMapPath = join(dir, 'track-map.yaml');
+    await writeFile(trackMapPath, 'version: 2\n', 'utf8');
+    let requestCount = 0;
+    const server = createMockTrackServer((_request, response) => {
+      requestCount += 1;
+      response.statusCode = 500;
+      response.end('Unexpected API request');
+    });
+    const port = await listenMockTrackServer(server);
+
+    try {
+      await expect(runPublish([
+        '--base-url',
+        `http://127.0.0.1:${port}`,
+        '--appspace',
+        'test-appspace',
+        '--cookie',
+        'sid=test',
+        '--track-map',
+        trackMapPath,
+        '--no-material',
+        '--yes',
+      ])).rejects.toMatchObject({ stderr: expect.stringMatching(/track-map/i) });
+      expect(requestCount).toBe(0);
+    } finally {
+      await closeMockTrackServer(server);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('dry-runs through payload generation without credentials', async () => {
     const { stdout } = await runPublish([]);
 
@@ -480,10 +512,11 @@ describe('publish CLI', () => {
     const dir = join(tmpdir(), `qti-to-track-image-partial-map-unsafe-${process.pid}-${Date.now()}`);
     const qtiDir = await writeTwoImageQtiFixture(dir);
     const cachePath = join(dir, 'image-upload-cache.json');
-    const trackMapPath = join(dir, 'missing-parent', 'track-map.yaml');
+    const trackMapPath = join(dir, 'track-map.yaml');
+    await writeFile(trackMapPath, 'version: 1\n', 'utf8');
     let port = 0;
     let createCount = 0;
-    const server = createMockTrackServer((request, response) => {
+    const server = createMockTrackServer(async (request, response) => {
       if (request.method === 'POST' && request.url === '/api/images/upload-signature') {
         response.statusCode = 200;
         response.setHeader('content-type', 'application/json');
@@ -507,6 +540,8 @@ describe('publish CLI', () => {
       if (request.method === 'POST' && request.url === '/api/questions') {
         createCount += 1;
         if (createCount === 2) {
+          await rm(trackMapPath);
+          await mkdir(trackMapPath);
           response.statusCode = 401;
           response.statusMessage = 'Unauthorized';
           response.end('Unauthorized');
@@ -756,10 +791,14 @@ describe('publish CLI', () => {
   it('keeps the original auth error when partial track-map persistence fails', async () => {
     const dir = join(tmpdir(), `qti-to-track-map-save-failure-${process.pid}-${Date.now()}`);
     await mkdir(dir, { recursive: true });
+    const trackMapPath = join(dir, 'track-map.yaml');
+    await writeFile(trackMapPath, 'version: 1\n', 'utf8');
     let createCount = 0;
-    const server = createMockTrackServer((_request, response) => {
+    const server = createMockTrackServer(async (_request, response) => {
       createCount += 1;
       if (createCount === 2) {
+        await rm(trackMapPath);
+        await mkdir(trackMapPath);
         response.statusCode = 401;
         response.statusMessage = 'Unauthorized';
         response.end('Unauthorized');
@@ -781,7 +820,7 @@ describe('publish CLI', () => {
         '--cookie',
         'sid=test',
         '--track-map',
-        join(dir, 'missing-parent', 'track-map.yaml'),
+        trackMapPath,
         '--no-material',
         '--yes',
       ]).then(

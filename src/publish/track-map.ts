@@ -1,6 +1,6 @@
-import { readFile, writeFile, rename } from 'node:fs/promises';
-import { dirname } from 'node:path';
-import { createHash } from 'node:crypto';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { randomUUID, createHash } from 'node:crypto';
+import { basename, dirname, join } from 'node:path';
 import yaml from 'yaml';
 import type { TrackMaterialPayload, TrackQuestionPayload } from '@metyatech/track-tcm-api-client';
 import type { TrackMaterialDraft } from '../types.js';
@@ -35,18 +35,23 @@ export interface TrackMap {
 }
 
 export async function loadTrackMap(filePath: string): Promise<TrackMap> {
+  let content: string;
   try {
-    const content = await readFile(filePath, 'utf8');
-    const parsed = yaml.parse(content);
-    if (parsed && parsed.version === 1) {
-      return parsed as TrackMap;
-    }
-  } catch (e: any) {
-    if (e.code !== 'ENOENT') {
-      throw e;
-    }
+    content = await readFile(filePath, 'utf8');
+  } catch (error: unknown) {
+    if (isNodeError(error) && error.code === 'ENOENT') return { version: 1 };
+    throw error;
   }
-  return { version: 1 };
+
+  let parsed: unknown;
+  try {
+    parsed = yaml.parse(content);
+  } catch (error) {
+    throw invalidTrackMap(filePath, `could not parse YAML: ${errorMessage(error)}`);
+  }
+
+  validateTrackMap(parsed, filePath);
+  return parsed;
 }
 
 export async function saveTrackMap(filePath: string, trackMap: TrackMap): Promise<void> {
@@ -63,9 +68,114 @@ export async function saveTrackMap(filePath: string, trackMap: TrackMap): Promis
     }
   });
   
-  const tmpPath = `${filePath}.tmp`;
-  await writeFile(tmpPath, content, 'utf8');
-  await rename(tmpPath, filePath);
+  const directory = dirname(filePath);
+  const tmpPath = join(directory, `.${basename(filePath)}.${randomUUID()}.tmp`);
+  await mkdir(directory, { recursive: true });
+
+  try {
+    await writeFile(tmpPath, content, { encoding: 'utf8', flag: 'wx' });
+    await rename(tmpPath, filePath);
+  } catch (error) {
+    try {
+      await rm(tmpPath, { force: true });
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], `Failed to save track-map and clean up temporary file "${tmpPath}"`);
+    }
+    throw error;
+  }
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error;
+}
+
+function validateTrackMap(value: unknown, filePath: string): asserts value is TrackMap {
+  if (!isRecord(value)) {
+    throw invalidTrackMap(filePath, 'expected a YAML mapping');
+  }
+  if (value.version !== 1) {
+    throw invalidTrackMap(filePath, 'version must be 1');
+  }
+
+  if (value.target !== undefined) {
+    if (!isRecord(value.target)) {
+      throw invalidTrackMap(filePath, 'target must be a mapping');
+    }
+    requireString(value.target.base_url, 'target.base_url', filePath);
+    requireString(value.target.appspace, 'target.appspace', filePath);
+  }
+
+  if (value.questions !== undefined) {
+    validateEntries(value.questions, 'questions', filePath, (entry, key) => {
+      requireId(entry.track_question_id, `questions.${key}.track_question_id`, filePath);
+      requireString(entry.title, `questions.${key}.title`, filePath);
+      requireString(entry.source_hash, `questions.${key}.source_hash`, filePath);
+      requireString(entry.updated_at, `questions.${key}.updated_at`, filePath);
+    });
+  }
+
+  if (value.materials !== undefined) {
+    validateEntries(value.materials, 'materials', filePath, (entry, key) => {
+      requireId(entry.track_material_id, `materials.${key}.track_material_id`, filePath);
+      requireString(entry.title, `materials.${key}.title`, filePath);
+      if (!Array.isArray(entry.question_keys) || !entry.question_keys.every(isNonEmptyString)) {
+        throw invalidTrackMap(filePath, `materials.${key}.question_keys must be an array of non-empty strings`);
+      }
+      requireString(entry.updated_at, `materials.${key}.updated_at`, filePath);
+      if (entry.source_hash !== undefined) {
+        requireString(entry.source_hash, `materials.${key}.source_hash`, filePath);
+      }
+      if (entry.release_id !== undefined) {
+        requireString(entry.release_id, `materials.${key}.release_id`, filePath);
+      }
+    });
+  }
+}
+
+function validateEntries(
+  value: unknown,
+  section: string,
+  filePath: string,
+  validateEntry: (entry: Record<string, unknown>, key: string) => void,
+): void {
+  if (!isRecord(value)) {
+    throw invalidTrackMap(filePath, `${section} must be a mapping`);
+  }
+
+  for (const [key, candidate] of Object.entries(value)) {
+    if (!isNonEmptyString(key) || !isRecord(candidate)) {
+      throw invalidTrackMap(filePath, `${section} entries must have non-empty keys and mapping values`);
+    }
+    validateEntry(candidate, key);
+  }
+}
+
+function requireId(value: unknown, field: string, filePath: string): void {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+    throw invalidTrackMap(filePath, `${field} must be a positive safe integer`);
+  }
+}
+
+function requireString(value: unknown, field: string, filePath: string): void {
+  if (!isNonEmptyString(value)) {
+    throw invalidTrackMap(filePath, `${field} must be a non-empty string`);
+  }
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function invalidTrackMap(filePath: string, reason: string): Error {
+  return new Error(`Invalid track-map at "${filePath}": ${reason}`);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function hashTrackSource(source: string): string {

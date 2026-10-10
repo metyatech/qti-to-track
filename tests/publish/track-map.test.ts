@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { loadTrackMap, saveTrackMap, hashTrackSource, TrackMap, stableJsonStringify, updateTrackMapForPublish } from '../../src/publish/track-map.js';
-import { rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 describe('track-map', () => {
   const TEST_FILE = 'tests/publish/test-track-map.yaml';
@@ -14,6 +16,52 @@ describe('track-map', () => {
   it('loads empty defaults when file does not exist', async () => {
     const map = await loadTrackMap('tests/publish/nonexistent.yaml');
     expect(map).toEqual({ version: 1 });
+  });
+
+  it.each([
+    ['empty file', ''],
+    ['malformed YAML', 'version: ['],
+    ['null', 'null\n'],
+    ['array', '- version: 1\n'],
+    ['scalar', 'hello\n'],
+    ['version mismatch', 'version: 2\n'],
+    ['non-object target', 'version: 1\ntarget: []\n'],
+    ['invalid question ID', 'version: 1\nquestions:\n  qti/q1:\n    track_question_id: 0\n    title: Q1\n    updated_at: now\n'],
+    ['invalid material ID', 'version: 1\nmaterials:\n  qti/Exam:\n    track_material_id: nope\n    title: Exam\n    question_keys: []\n    updated_at: now\n'],
+  ])('rejects an existing %s track-map', async (_name, content) => {
+    const dir = await mkdtemp(join(tmpdir(), 'qti-track-map-invalid-'));
+    const filePath = join(dir, 'track-map.yaml');
+    await writeFile(filePath, content, 'utf8');
+
+    try {
+      await expect(loadTrackMap(filePath)).rejects.toThrow(/track-map/i);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts legacy material keys and entries without source hashes', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'qti-track-map-legacy-'));
+    const filePath = join(dir, 'track-map.yaml');
+    await writeFile(filePath, [
+      'version: 1',
+      'materials:',
+      '  qti/Final Exam:',
+      '    track_material_id: 123',
+      '    title: Final Exam',
+      '    question_keys: [qti/q1]',
+      '    updated_at: 2026-05-28T12:00:00.000Z',
+      '',
+    ].join('\n'), 'utf8');
+
+    try {
+      await expect(loadTrackMap(filePath)).resolves.toMatchObject({
+        version: 1,
+        materials: { 'qti/Final Exam': { track_material_id: 123 } },
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('saves and loads track map', async () => {
@@ -37,6 +85,48 @@ describe('track-map', () => {
     const loaded = await loadTrackMap(TEST_FILE);
     
     expect(loaded).toEqual(map);
+  });
+
+  it('creates nested parent directories when saving', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'qti-track-map-nested-'));
+    const filePath = join(dir, 'nested', 'maps', 'track-map.yaml');
+
+    try {
+      await saveTrackMap(filePath, { version: 1 });
+      await expect(loadTrackMap(filePath)).resolves.toEqual({ version: 1 });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('overwrites atomically without leaving temporary files', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'qti-track-map-overwrite-'));
+    const filePath = join(dir, 'track-map.yaml');
+
+    try {
+      await writeFile(filePath, 'version: 1\n', 'utf8');
+      await saveTrackMap(filePath, { version: 1, target: { base_url: 'https://tracks.dev', appspace: 'app' } });
+
+      await expect(loadTrackMap(filePath)).resolves.toMatchObject({ target: { appspace: 'app' } });
+      expect(await readdir(dir)).toEqual(['track-map.yaml']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('cleans up a failed temporary write and preserves the existing destination', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'qti-track-map-failure-'));
+    const filePath = join(dir, 'destination');
+    await mkdir(filePath);
+    const original = await stat(filePath);
+
+    try {
+      await expect(saveTrackMap(filePath, { version: 1 })).rejects.toThrow();
+      expect((await stat(filePath)).isDirectory()).toBe(original.isDirectory());
+      expect(await readdir(dir)).toEqual(['destination']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('hashes correctly', () => {
